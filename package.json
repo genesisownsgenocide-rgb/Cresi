@@ -2,10 +2,10 @@
   "name": "banat-only-bot",
   "version": "1.0.0",
   "private": false,
-  "description": "Standalone Messenger Banat bot: triggers, humanizer, mimicker, memory, timing, and traffic protection. No AI, games, economy, database, music, RPG, or ECLIPSE services.",
+  "description": "Standalone Messenger Banat bot",
   "main": "index.js",
   "scripts": {
-    "start": "node auto.js",
+    "start": "node index.js",
     "bot": "node index.js",
     "dashboard": "node dashboard.js",
     "check": "node --check index.js && node --check dashboard.js && node --check auto.js"
