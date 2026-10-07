@@ -13,6 +13,9 @@ const GLOBAL_SEND_LIMIT = Math.max(1, Number(process.env.BANAT_GLOBAL_SEND_LIMIT
 const THREAD_COOLDOWN_MS = Math.max(0, Number(process.env.BANAT_THREAD_COOLDOWN_MS || 12000));
 const RETRY_DELAYS = [1500, 4000, 8000];
 
+// Official Admin ID restriction strictly set to your target UID
+const ADMIN_UID = "61595204307407";
+
 const activeThreads = new Set();
 const threadQueues = new Map();
 const threadLastSent = new Map();
@@ -153,7 +156,7 @@ function trafficSendMessage(api, message, threadID, callback, replyToMessageID =
 }
 
 function isBanatCommand(body) {
-  return /^!banat(?:\s|$)/i.test(String(body || "").trim());
+  return /^!(?:banat|troll)(?:\s|$)/i.test(String(body || "").trim());
 }
 
 function commandSendMessage(api, message, threadID, replyToMessageID = null) {
@@ -189,8 +192,21 @@ function sendCommandReply(api, event, message) {
 
 function handleBanatCommand(api, event, body) {
   const threadID = String(event.threadID);
+  const senderID = String(event.senderID || "");
   const parts = String(body).trim().split(/\s+/);
+  const cmd = (parts[0] || "").toLowerCase();
   const sub = (parts[1] || "status").toLowerCase();
+
+  // Strict Admin Restriction for /troll command
+  if (cmd === "!troll") {
+    if (senderID !== ADMIN_UID) {
+      sendCommandReply(api, event, "❌ Hoy, hindi ka admin! Tigil-tigilan mo yan.");
+      return true;
+    }
+    const targetUID = parts[1] || "wala";
+    sendCommandReply(api, event, `👑 Admin access granted. Na-troll ang target ID: ${targetUID}`);
+    return true;
+  }
 
   if (sub === "on" || sub === "enable" || sub === "start") {
     setBanatConversationMode(threadID, true, event.senderID);
@@ -225,7 +241,7 @@ function handleBanatCommand(api, event, body) {
   }
 
   if (sub === "help") {
-    sendCommandReply(api, event, "!banat on · !banat off · !banat toggle · !banat status");
+    sendCommandReply(api, event, "!banat on · !banat off · !banat toggle · !banat status · !troll [uid]");
     return true;
   }
 
