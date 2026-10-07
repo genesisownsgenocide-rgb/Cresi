@@ -7,11 +7,9 @@ const express = require("express");
 const session = require("express-session");
 const { login } = require("ws3-fca");
 
-/*
- * ============================================================
- * EXISTING HUMAN / BANAT SYSTEM
- * ============================================================
- */
+/* ============================================================
+   EXISTING HUMAN / BANAT SYSTEM
+   ============================================================ */
 
 const {
   getTriggerReply,
@@ -28,11 +26,9 @@ const {
   isBanatConversationModeActive
 } = require("./banat-targeting");
 
-/*
- * ============================================================
- * NICKNAME / GC NAME PROTECTION
- * ============================================================
- */
+/* ============================================================
+   NICKNAME / GC NAME PROTECTION
+   ============================================================ */
 
 const {
   handleCommand: handleNicknameCommand,
@@ -44,37 +40,33 @@ const {
   protectGCName
 } = require("./gcname-lock");
 
-/*
- * ============================================================
- * EXPRESS
- * ============================================================
- */
+/* ============================================================
+   EXPRESS
+   ============================================================ */
 
 const app = express();
 const server = http.createServer(app);
 
 const PORT = Number(process.env.PORT || 10000);
 
-/*
- * Render / Railway reverse proxy support
- */
 app.set("trust proxy", 1);
 
 app.use(express.json({ limit: "5mb" }));
-app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: "5mb"
+}));
 
-/*
- * ============================================================
- * DASHBOARD LOGIN
- * ============================================================
- */
+/* ============================================================
+   DASHBOARD AUTH
+   ============================================================ */
 
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "halimaw123";
 
 app.use(
   session({
-    secret: "sinzu-dashboard-session-secret-change-this",
+    secret: "sinzu-command-center-session-secret",
     resave: false,
     saveUninitialized: false,
     proxy: true,
@@ -87,14 +79,13 @@ app.use(
   })
 );
 
-/*
- * ============================================================
- * CONFIG
- * ============================================================
- */
+/* ============================================================
+   CONFIG
+   ============================================================ */
 
 const DEFAULT_ON =
-  String(process.env.BANAT_DEFAULT_ON || "true").toLowerCase() === "true";
+  String(process.env.BANAT_DEFAULT_ON || "true")
+    .toLowerCase() === "true";
 
 const GLOBAL_SEND_LIMIT = Math.max(
   1,
@@ -106,15 +97,17 @@ const THREAD_COOLDOWN_MS = Math.max(
   Number(process.env.THREAD_COOLDOWN_MS || 12000)
 );
 
-const RETRY_DELAYS = [1500, 4000, 8000];
+const RETRY_DELAYS = [
+  1500,
+  4000,
+  8000
+];
 
 const ADMIN_UID = "61595204307407";
 
-/*
- * ============================================================
- * BOT STATE
- * ============================================================
- */
+/* ============================================================
+   BOT STATE
+   ============================================================ */
 
 let botApi = null;
 let botUserID = null;
@@ -124,27 +117,44 @@ let botError = null;
 let botLoginAt = null;
 let botConnecting = false;
 
-/*
- * ============================================================
- * BANAT STATE
- * ============================================================
- */
+const systemLogs = [];
+
+function addLog(type, message) {
+  const entry = {
+    time: new Date().toISOString(),
+    type: String(type || "INFO"),
+    message: String(message || "")
+  };
+
+  systemLogs.unshift(entry);
+
+  if (systemLogs.length > 80) {
+    systemLogs.length = 80;
+  }
+
+  console.log(
+    `[${entry.type}] ${entry.message}`
+  );
+}
+
+/* ============================================================
+   BANAT STATE
+   ============================================================ */
 
 const activeThreads = new Set();
 const threadQueues = new Map();
 const threadLastSent = new Map();
-const threadCooldown = new Map();
 
 let globalActive = 0;
 
-/*
- * ============================================================
- * HELPERS
- * ============================================================
- */
+/* ============================================================
+   HELPERS
+   ============================================================ */
 
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise(resolve =>
+    setTimeout(resolve, ms)
+  );
 }
 
 function escapeHtml(value) {
@@ -157,15 +167,26 @@ function escapeHtml(value) {
 }
 
 function uptimeText() {
-  if (!botLoginAt) return "0s";
+  if (!botLoginAt) {
+    return "0s";
+  }
 
   const seconds = Math.floor(
     (Date.now() - botLoginAt) / 1000
   );
 
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
+  const days = Math.floor(
+    seconds / 86400
+  );
+
+  const hours = Math.floor(
+    (seconds % 86400) / 3600
+  );
+
+  const minutes = Math.floor(
+    (seconds % 3600) / 60
+  );
+
   const secs = seconds % 60;
 
   const parts = [];
@@ -173,37 +194,57 @@ function uptimeText() {
   if (days) parts.push(`${days}d`);
   if (hours) parts.push(`${hours}h`);
   if (minutes) parts.push(`${minutes}m`);
+
   parts.push(`${secs}s`);
 
   return parts.join(" ");
 }
 
-/*
- * ============================================================
- * SESSION / APPSTATE
- * ============================================================
- */
+function getProtectionStatus() {
+  return {
+    nickname: {
+      loaded: true
+    },
+    gcname: {
+      loaded: true
+    }
+  };
+}
+
+/* ============================================================
+   APPSTATE / SESSION
+   ============================================================ */
 
 function normalizeSession(input) {
-  if (!input) return null;
+  if (!input) {
+    return null;
+  }
 
-  if (typeof input === "object") {
+  if (
+    typeof input === "object" &&
+    !Array.isArray(input)
+  ) {
     return input;
   }
 
-  const value = String(input).trim();
+  const value =
+    String(input).trim();
 
-  if (!value) return null;
+  if (!value) {
+    return null;
+  }
 
   try {
-    const parsed = JSON.parse(value);
+    const parsed =
+      JSON.parse(value);
 
-    if (parsed && typeof parsed === "object") {
+    if (
+      parsed &&
+      typeof parsed === "object"
+    ) {
       return parsed;
     }
-  } catch (_) {
-    // Not JSON. Continue as cookie string.
-  }
+  } catch (_) {}
 
   return value;
 }
@@ -213,14 +254,15 @@ function parseSessionInput(input) {
 }
 
 function getSavedSession() {
-  const candidates = [
+  const envSessions = [
     process.env.FB_APPSTATE,
     process.env.FB_COOKIES
   ];
 
-  for (const candidate of candidates) {
-    if (candidate) {
-      const parsed = parseSessionInput(candidate);
+  for (const value of envSessions) {
+    if (value) {
+      const parsed =
+        parseSessionInput(value);
 
       if (parsed) {
         return parsed;
@@ -228,14 +270,22 @@ function getSavedSession() {
     }
   }
 
-  const file = path.join(__dirname, "appstate.json");
+  const file =
+    path.join(
+      __dirname,
+      "appstate.json"
+    );
 
   try {
     if (!fs.existsSync(file)) {
       return null;
     }
 
-    const raw = fs.readFileSync(file, "utf8").trim();
+    const raw =
+      fs.readFileSync(
+        file,
+        "utf8"
+      ).trim();
 
     if (!raw) {
       return null;
@@ -243,9 +293,9 @@ function getSavedSession() {
 
     return parseSessionInput(raw);
   } catch (error) {
-    console.error(
-      "[APPSTATE] Failed reading saved session:",
-      error.message
+    addLog(
+      "ERROR",
+      `Could not read appstate: ${error.message}`
     );
 
     return null;
@@ -254,35 +304,49 @@ function getSavedSession() {
 
 function saveSession(sessionValue) {
   try {
-    const file = path.join(__dirname, "appstate.json");
+    const file =
+      path.join(
+        __dirname,
+        "appstate.json"
+      );
 
     fs.writeFileSync(
       file,
-      JSON.stringify(sessionValue, null, 2),
+      JSON.stringify(
+        sessionValue,
+        null,
+        2
+      ),
       "utf8"
     );
 
-    console.log("[APPSTATE] Session saved.");
+    addLog(
+      "SECURITY",
+      "Messenger session saved locally."
+    );
+
     return true;
   } catch (error) {
-    console.error(
-      "[APPSTATE] Failed saving session:",
-      error.message
+    addLog(
+      "ERROR",
+      `Could not save session: ${error.message}`
     );
 
     return false;
   }
 }
 
-/*
- * ============================================================
- * ACCOUNT INFO
- * ============================================================
- */
+/* ============================================================
+   ACCOUNT INFO
+   ============================================================ */
 
 function getBotAccountInfo(api) {
   return new Promise(resolve => {
-    if (!api || typeof api.getCurrentUserID !== "function") {
+    if (
+      !api ||
+      typeof api.getCurrentUserID !==
+        "function"
+    ) {
       resolve({
         uid: null,
         name: "Unknown"
@@ -294,7 +358,8 @@ function getBotAccountInfo(api) {
     let uid = null;
 
     try {
-      uid = api.getCurrentUserID();
+      uid =
+        api.getCurrentUserID();
     } catch (_) {}
 
     if (!uid) {
@@ -306,7 +371,10 @@ function getBotAccountInfo(api) {
       return;
     }
 
-    if (typeof api.getUserInfo !== "function") {
+    if (
+      typeof api.getUserInfo !==
+        "function"
+    ) {
       resolve({
         uid: String(uid),
         name: "Messenger Bot"
@@ -318,7 +386,11 @@ function getBotAccountInfo(api) {
     api.getUserInfo(
       [uid],
       (error, info) => {
-        if (error || !info || !info[uid]) {
+        if (
+          error ||
+          !info ||
+          !info[uid]
+        ) {
           resolve({
             uid: String(uid),
             name: "Messenger Bot"
@@ -339,51 +411,64 @@ function getBotAccountInfo(api) {
   });
 }
 
-/*
- * ============================================================
- * MESSAGE TRAFFIC
- * ============================================================
- */
+/* ============================================================
+   MESSAGE QUEUE
+   ============================================================ */
 
 function enqueue(threadID, task) {
-  const key = String(threadID);
+  const key =
+    String(threadID);
 
   if (!threadQueues.has(key)) {
-    threadQueues.set(key, []);
+    const queue = [];
+    queue.running = false;
+    threadQueues.set(
+      key,
+      queue
+    );
   }
 
-  const queue = threadQueues.get(key);
+  const queue =
+    threadQueues.get(key);
 
-  return new Promise((resolve, reject) => {
-    queue.push({
-      task,
-      resolve,
-      reject
-    });
+  return new Promise(
+    (resolve, reject) => {
+      queue.push({
+        task,
+        resolve,
+        reject
+      });
 
-    processQueue(key);
-  });
+      processQueue(key);
+    }
+  );
 }
 
 async function processQueue(threadID) {
-  const key = String(threadID);
-  const queue = threadQueues.get(key);
+  const key =
+    String(threadID);
 
-  if (!queue || !queue.length) {
-    return;
-  }
+  const queue =
+    threadQueues.get(key);
 
-  if (queue.running) {
+  if (
+    !queue ||
+    !queue.length ||
+    queue.running
+  ) {
     return;
   }
 
   queue.running = true;
 
   while (queue.length) {
-    const item = queue.shift();
+    const item =
+      queue.shift();
 
     try {
-      const result = await item.task();
+      const result =
+        await item.task();
+
       item.resolve(result);
     } catch (error) {
       item.reject(error);
@@ -394,7 +479,10 @@ async function processQueue(threadID) {
 }
 
 async function acquireGlobalSlot() {
-  while (globalActive >= GLOBAL_SEND_LIMIT) {
+  while (
+    globalActive >=
+    GLOBAL_SEND_LIMIT
+  ) {
     await sleep(100);
   }
 
@@ -402,103 +490,138 @@ async function acquireGlobalSlot() {
 }
 
 function releaseGlobalSlot() {
-  globalActive = Math.max(
-    0,
-    globalActive - 1
-  );
+  globalActive =
+    Math.max(
+      0,
+      globalActive - 1
+    );
 }
 
 function is1545012(error) {
-  const text = String(
-    error?.errorDescription ||
-    error?.message ||
-    error ||
-    ""
-  );
+  const text =
+    String(
+      error?.errorDescription ||
+      error?.message ||
+      error ||
+      ""
+    );
 
-  return text.includes("1545012");
+  return text.includes(
+    "1545012"
+  );
 }
 
-async function trafficSendMessage(api, message, threadID) {
-  if (!api || typeof api.sendMessage !== "function") {
-    throw new Error("Messenger API unavailable.");
+async function trafficSendMessage(
+  api,
+  message,
+  threadID
+) {
+  if (
+    !api ||
+    typeof api.sendMessage !==
+      "function"
+  ) {
+    throw new Error(
+      "Messenger API unavailable."
+    );
   }
 
-  const key = String(threadID);
+  const key =
+    String(threadID);
 
-  return enqueue(key, async () => {
-    const lastSent = threadLastSent.get(key) || 0;
-    const wait =
-      THREAD_COOLDOWN_MS -
-      (Date.now() - lastSent);
+  return enqueue(
+    key,
+    async () => {
+      const lastSent =
+        threadLastSent.get(key) ||
+        0;
 
-    if (wait > 0) {
-      await sleep(wait);
-    }
+      const wait =
+        THREAD_COOLDOWN_MS -
+        (
+          Date.now() -
+          lastSent
+        );
 
-    await acquireGlobalSlot();
-
-    try {
-      let lastError = null;
-
-      for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
-        try {
-          const result = await new Promise(
-            (resolve, reject) => {
-              api.sendMessage(
-                message,
-                threadID,
-                (error, info) => {
-                  if (error) {
-                    reject(error);
-                    return;
-                  }
-
-                  resolve(info);
-                }
-              );
-            }
-          );
-
-          threadLastSent.set(
-            key,
-            Date.now()
-          );
-
-          return result;
-        } catch (error) {
-          lastError = error;
-
-          if (
-            attempt >= RETRY_DELAYS.length ||
-            !is1545012(error)
-          ) {
-            throw error;
-          }
-
-          await sleep(
-            RETRY_DELAYS[attempt]
-          );
-        }
+      if (wait > 0) {
+        await sleep(wait);
       }
 
-      throw lastError;
-    } finally {
-      releaseGlobalSlot();
+      await acquireGlobalSlot();
+
+      try {
+        let lastError = null;
+
+        for (
+          let attempt = 0;
+          attempt <= RETRY_DELAYS.length;
+          attempt++
+        ) {
+          try {
+            const result =
+              await new Promise(
+                (
+                  resolve,
+                  reject
+                ) => {
+                  api.sendMessage(
+                    message,
+                    threadID,
+                    (
+                      error,
+                      info
+                    ) => {
+                      if (error) {
+                        reject(error);
+                        return;
+                      }
+
+                      resolve(info);
+                    }
+                  );
+                }
+              );
+
+            threadLastSent.set(
+              key,
+              Date.now()
+            );
+
+            return result;
+          } catch (error) {
+            lastError = error;
+
+            if (
+              attempt >=
+                RETRY_DELAYS.length ||
+              !is1545012(error)
+            ) {
+              throw error;
+            }
+
+            await sleep(
+              RETRY_DELAYS[attempt]
+            );
+          }
+        }
+
+        throw lastError;
+      } finally {
+        releaseGlobalSlot();
+      }
     }
-  });
+  );
 }
 
-/*
- * ============================================================
- * BANAT COMMAND SYSTEM
- * ============================================================
- */
+/* ============================================================
+   BANAT COMMANDS
+   ============================================================ */
 
 function isBanatCommand(body) {
-  const text = String(body || "")
-    .trim()
-    .toLowerCase();
+  const text =
+    String(body || "")
+      .trim()
+      .toLowerCase();
 
   return (
     text === "/banat" ||
@@ -506,7 +629,11 @@ function isBanatCommand(body) {
   );
 }
 
-function commandSendMessage(api, message, threadID) {
+function commandSendMessage(
+  api,
+  message,
+  threadID
+) {
   return trafficSendMessage(
     api,
     message,
@@ -519,7 +646,9 @@ async function sendCommandReply(
   event,
   message
 ) {
-  if (!message) return;
+  if (!message) {
+    return;
+  }
 
   return commandSendMessage(
     api,
@@ -533,25 +662,27 @@ async function handleBanatCommand(
   event,
   body
 ) {
-  const parts = String(body || "")
-    .trim()
-    .split(/\s+/);
+  const parts =
+    String(body || "")
+      .trim()
+      .split(/\s+/);
 
-  const command = (
-    parts[0] || ""
-  ).toLowerCase();
+  const command =
+    (
+      parts[0] || ""
+    ).toLowerCase();
 
   if (command !== "/banat") {
     return false;
   }
 
-  const action = (
-    parts[1] || ""
-  ).toLowerCase();
+  const action =
+    (
+      parts[1] || ""
+    ).toLowerCase();
 
-  const threadID = String(
-    event.threadID
-  );
+  const threadID =
+    String(event.threadID);
 
   if (
     event.senderID &&
@@ -559,7 +690,9 @@ async function handleBanatCommand(
       String(ADMIN_UID)
   ) {
     if (action === "on") {
-      activeThreads.add(threadID);
+      activeThreads.add(
+        threadID
+      );
 
       setBanatConversationMode(
         threadID,
@@ -573,11 +706,18 @@ async function handleBanatCommand(
         "Banat mode: ON."
       );
 
+      addLog(
+        "BANAT",
+        `Banat enabled in ${threadID}`
+      );
+
       return true;
     }
 
     if (action === "off") {
-      activeThreads.delete(threadID);
+      activeThreads.delete(
+        threadID
+      );
 
       setBanatConversationMode(
         threadID,
@@ -591,12 +731,19 @@ async function handleBanatCommand(
         "Banat mode: OFF."
       );
 
+      addLog(
+        "BANAT",
+        `Banat disabled in ${threadID}`
+      );
+
       return true;
     }
 
     if (action === "status") {
       const status =
-        activeThreads.has(threadID);
+        activeThreads.has(
+          threadID
+        );
 
       await sendCommandReply(
         api,
@@ -613,18 +760,18 @@ async function handleBanatCommand(
   return false;
 }
 
-/*
- * ============================================================
- * BANAT MESSAGE HANDLER
- * ============================================================
- */
+/* ============================================================
+   HUMAN BANAT SEND
+   ============================================================ */
 
 async function sendBanat(
   api,
   event,
   reply
 ) {
-  if (!reply) return;
+  if (!reply) {
+    return;
+  }
 
   if (
     typeof sendBanatReplyWithTyping ===
@@ -638,9 +785,9 @@ async function sendBanat(
         trafficSendMessage
       );
     } catch (error) {
-      console.error(
-        "[BANAT HUMAN]",
-        error.message
+      addLog(
+        "ERROR",
+        `Human reply failed: ${error.message}`
       );
     }
   }
@@ -652,12 +799,18 @@ async function sendBanat(
   );
 }
 
-function onMessage(api, event) {
-  if (!event) return;
+/* ============================================================
+   MESSAGE HANDLER
+   ============================================================ */
 
-  /*
-   * Ignore bot's own messages
-   */
+function onMessage(
+  api,
+  event
+) {
+  if (!event) {
+    return;
+  }
+
   if (
     event.senderID &&
     botUserID &&
@@ -667,17 +820,14 @@ function onMessage(api, event) {
     return;
   }
 
-  const body = String(
-    event.body || ""
-  ).trim();
+  const body =
+    String(
+      event.body || ""
+    ).trim();
 
-  /*
-   * ==========================================================
-   * NICKNAME / GC NAME COMMANDS
-   * ==========================================================
-   *
-   * These are checked before normal message processing.
-   */
+  /* --------------------------------------------
+     PROTECTION COMMANDS
+     -------------------------------------------- */
 
   if (body) {
     try {
@@ -688,12 +838,17 @@ function onMessage(api, event) {
           body
         )
       ) {
+        addLog(
+          "NICKNAME",
+          `Command executed in ${event.threadID}`
+        );
+
         return;
       }
     } catch (error) {
-      console.error(
-        "[NICKNAME COMMAND]",
-        error.message
+      addLog(
+        "ERROR",
+        `Nickname command: ${error.message}`
       );
     }
 
@@ -705,19 +860,21 @@ function onMessage(api, event) {
           body
         )
       ) {
+        addLog(
+          "GC NAME",
+          `Command executed in ${event.threadID}`
+        );
+
         return;
       }
     } catch (error) {
-      console.error(
-        "[GC NAME COMMAND]",
-        error.message
+      addLog(
+        "ERROR",
+        `GC name command: ${error.message}`
       );
     }
   }
 
-  /*
-   * Existing message filter
-   */
   if (
     event.type &&
     event.type !== "message"
@@ -725,101 +882,70 @@ function onMessage(api, event) {
     return;
   }
 
-  if (!body) return;
+  if (!body) {
+    return;
+  }
 
-  /*
-   * ==========================================================
-   * EXISTING BANAT COMMANDS
-   * ==========================================================
-   */
+  /* --------------------------------------------
+     BANAT COMMAND
+     -------------------------------------------- */
 
-  if (isBanatCommand(body)) {
+  if (
+    isBanatCommand(body)
+  ) {
     handleBanatCommand(
       api,
       event,
       body
     ).catch(error => {
-      console.error(
-        "[BANAT COMMAND]",
-        error.message
+      addLog(
+        "ERROR",
+        `Banat command: ${error.message}`
       );
     });
 
     return;
   }
 
-  const threadID = String(
-    event.threadID || ""
-  );
+  const threadID =
+    String(
+      event.threadID || ""
+    );
 
-  if (!threadID) return;
+  if (!threadID) {
+    return;
+  }
 
-  /*
-   * ==========================================================
-   * EXISTING TARGET CLASSIFICATION
-   * ==========================================================
-   */
+  /* --------------------------------------------
+     TARGET CLASSIFICATION
+     -------------------------------------------- */
 
   let targetInfo = null;
 
   try {
-    targetInfo = classifyBanatTarget(
-      event,
-      botUserID
-    );
+    targetInfo =
+      classifyBanatTarget(
+        event,
+        botUserID
+      );
   } catch (error) {
-    console.error(
-      "[TARGET CLASSIFY]",
-      error.message
+    addLog(
+      "ERROR",
+      `Target classification: ${error.message}`
     );
   }
 
-  /*
-   * ==========================================================
-   * EXISTING ACTIVE MODE
-   * ==========================================================
-   */
-
   const modeActive =
-    activeThreads.has(threadID) ||
+    activeThreads.has(
+      threadID
+    ) ||
     isBanatConversationModeActive(
       threadID
     );
 
-  if (
-    !modeActive &&
-    !targetInfo?.isTarget
-  ) {
-    /*
-     * Trigger replies can still work here.
-     */
-    const triggerReply =
-      getTriggerReply(
-        body,
-        threadID
-      );
-
-    if (triggerReply) {
-      sendBanat(
-        api,
-        event,
-        triggerReply
-      ).catch(error => {
-        console.error(
-          "[TRIGGER SEND]",
-          error.message
-        );
-      });
-    }
-
-    return;
-  }
-
-  /*
-   * ==========================================================
-   * TRIGGER REPLY
-   * ==========================================================
-   */
+  /* --------------------------------------------
+     TRIGGER REPLY
+     -------------------------------------------- */
 
   const triggerReply =
     getTriggerReply(
@@ -833,20 +959,29 @@ function onMessage(api, event) {
       event,
       triggerReply
     ).catch(error => {
-      console.error(
-        "[TRIGGER SEND]",
-        error.message
+      addLog(
+        "ERROR",
+        `Trigger send: ${error.message}`
       );
     });
 
     return;
   }
 
-  /*
-   * ==========================================================
-   * HUMAN BANAT CONVERSATION
-   * ==========================================================
-   */
+  /* --------------------------------------------
+     ONLY CONTINUE BANAT WHEN ACTIVE/TARGETED
+     -------------------------------------------- */
+
+  if (
+    !modeActive &&
+    !targetInfo?.isTarget
+  ) {
+    return;
+  }
+
+  /* --------------------------------------------
+     HUMAN BANAT CONVERSATION
+     -------------------------------------------- */
 
   const banatReply =
     getBanatConversationReply(
@@ -860,19 +995,17 @@ function onMessage(api, event) {
       event,
       banatReply
     ).catch(error => {
-      console.error(
-        "[BANAT SEND]",
-        error.message
+      addLog(
+        "ERROR",
+        `Banat send: ${error.message}`
       );
     });
   }
 }
 
-/*
- * ============================================================
- * START BOT
- * ============================================================
- */
+/* ============================================================
+   START BOT
+   ============================================================ */
 
 function start(api) {
   botApi = api;
@@ -889,36 +1022,30 @@ function start(api) {
     botUserID = null;
   }
 
-  console.log(
-    `[BOT] Logged in as ${botUserID || "unknown"}`
+  addLog(
+    "BOT",
+    `Logged in as ${botName} (${botUserID || "unknown"})`
   );
 
-  /*
-   * Default banat mode
-   */
   if (DEFAULT_ON) {
-    console.log(
-      "[BANAT] Default mode enabled."
+    addLog(
+      "BANAT",
+      "Default banat mode is enabled."
     );
   }
-
-  /*
-   * ==========================================================
-   * MQTT LISTENER
-   * ==========================================================
-   */
 
   api.listenMqtt(
     (error, event) => {
       if (error) {
         botStatus = "error";
+
         botError =
           error?.errorDescription ||
           error?.message ||
           String(error);
 
-        console.error(
-          "[MQTT]",
+        addLog(
+          "MQTT ERROR",
           botError
         );
 
@@ -926,11 +1053,9 @@ function start(api) {
       }
 
       try {
-        /*
-         * ======================================================
-         * NICKNAME PROTECTION
-         * ======================================================
-         */
+        /* ----------------------------------------
+           NICKNAME PROTECTION
+           ---------------------------------------- */
 
         if (
           event &&
@@ -942,18 +1067,16 @@ function start(api) {
               event
             )
           ).catch(error => {
-            console.error(
-              "[NICKNAME PROTECTION]",
-              error.message
+            addLog(
+              "ERROR",
+              `Nickname protection: ${error.message}`
             );
           });
         }
 
-        /*
-         * ======================================================
-         * GC NAME PROTECTION
-         * ======================================================
-         */
+        /* ----------------------------------------
+           GC NAME PROTECTION
+           ---------------------------------------- */
 
         if (
           event &&
@@ -965,18 +1088,16 @@ function start(api) {
               event
             )
           ).catch(error => {
-            console.error(
-              "[GC NAME PROTECTION]",
-              error.message
+            addLog(
+              "ERROR",
+              `GC name protection: ${error.message}`
             );
           });
         }
 
-        /*
-         * ======================================================
-         * DEFAULT BANAT MODE
-         * ======================================================
-         */
+        /* ----------------------------------------
+           DEFAULT BANAT
+           ---------------------------------------- */
 
         if (
           DEFAULT_ON &&
@@ -985,57 +1106,45 @@ function start(api) {
           String(event.senderID) !==
             String(botUserID)
         ) {
-          const key = String(
-            event.threadID
-          );
+          const key =
+            String(
+              event.threadID
+            );
 
           if (
             !activeThreads.has(key)
           ) {
             activeThreads.add(key);
 
-            try {
-              setBanatConversationMode(
-                key,
-                true,
-                event.senderID
-              );
-            } catch (error) {
-              console.error(
-                "[BANAT MODE]",
-                error.message
-              );
-            }
+            setBanatConversationMode(
+              key,
+              true,
+              event.senderID
+            );
           }
         }
-
-        /*
-         * ======================================================
-         * NORMAL MESSAGE HANDLER
-         * ======================================================
-         */
 
         onMessage(
           api,
           event
         );
       } catch (handlerError) {
-        console.error(
-          "[EVENT HANDLER]",
-          handlerError
+        addLog(
+          "ERROR",
+          `Event handler: ${handlerError.message}`
         );
       }
     }
   );
 }
 
-/*
- * ============================================================
- * BOT LOGIN
- * ============================================================
- */
+/* ============================================================
+   LOGIN BOT
+   ============================================================ */
 
-async function loginBot(sessionValue) {
+async function loginBot(
+  sessionValue
+) {
   if (botConnecting) {
     throw new Error(
       "Bot login is already in progress."
@@ -1057,68 +1166,75 @@ async function loginBot(sessionValue) {
   botStatus = "connecting";
   botError = null;
 
-  console.log(
-    "[BOT] Attempting Messenger login..."
+  addLog(
+    "LOGIN",
+    "Attempting Messenger login..."
   );
 
   try {
-    const api = await new Promise(
-      (resolve, reject) => {
-        let finished = false;
+    const api =
+      await new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          let finished = false;
 
-        function done(
-          error,
-          result
-        ) {
-          if (finished) return;
+          function done(
+            error,
+            result
+          ) {
+            if (finished) {
+              return;
+            }
 
-          finished = true;
+            finished = true;
 
-          if (error) {
-            reject(error);
-            return;
+            if (error) {
+              reject(error);
+              return;
+            }
+
+            if (!result) {
+              reject(
+                new Error(
+                  "Messenger login returned no API."
+                )
+              );
+
+              return;
+            }
+
+            resolve(result);
           }
 
-          if (!result) {
-            reject(
-              new Error(
-                "Messenger login returned no API."
-              )
+          try {
+            login(
+              normalized,
+              done
             );
-
-            return;
+          } catch (error) {
+            done(error);
           }
-
-          resolve(result);
         }
-
-        try {
-          /*
-           * ws3-fca supports cookie/AppState-style
-           * session login through the login function.
-           */
-          login(
-            normalized,
-            done
-          );
-        } catch (error) {
-          done(error);
-        }
-      }
-    );
+      );
 
     botApi = api;
 
     const account =
-      await getBotAccountInfo(api);
+      await getBotAccountInfo(
+        api
+      );
 
-    botUserID = account.uid;
-    botName = account.name;
+    botUserID =
+      account.uid;
 
-    /*
-     * Save only after successful login.
-     */
-    saveSession(normalized);
+    botName =
+      account.name;
+
+    saveSession(
+      normalized
+    );
 
     start(api);
 
@@ -1126,8 +1242,9 @@ async function loginBot(sessionValue) {
     botError = null;
     botLoginAt = Date.now();
 
-    console.log(
-      `[BOT] Online: ${botName} (${botUserID})`
+    addLog(
+      "SUCCESS",
+      `Bot online: ${botName} (${botUserID})`
     );
 
     return {
@@ -1146,8 +1263,8 @@ async function loginBot(sessionValue) {
       error?.message ||
       String(error);
 
-    console.error(
-      "[BOT LOGIN FAILED]",
+    addLog(
+      "LOGIN ERROR",
       botError
     );
 
@@ -1157,200 +1274,51 @@ async function loginBot(sessionValue) {
   }
 }
 
-/*
- * ============================================================
- * DASHBOARD AUTH
- * ============================================================
- */
+/* ============================================================
+   AUTH
+   ============================================================ */
 
-function requireAuth(req, res, next) {
-  if (req.session?.authenticated) {
+function requireAuth(
+  req,
+  res,
+  next
+) {
+  if (
+    req.session &&
+    req.session.authenticated
+  ) {
     return next();
   }
 
-  return res.redirect("/login");
+  return res.redirect(
+    "/login"
+  );
 }
 
-/*
- * ============================================================
- * LOGIN PAGE
- * ============================================================
- */
+/* ============================================================
+   LOGIN PAGE
+   ============================================================ */
 
-app.get("/login", (req, res) => {
-  if (req.session?.authenticated) {
-    return res.redirect("/dashboard");
-  }
-
-  res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport"
-      content="width=device-width, initial-scale=1.0">
-
-<title>SINZU AI — Login</title>
-
-<style>
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #080808;
-  color: #fff;
-  font-family: Arial, sans-serif;
-}
-
-.box {
-  width: min(420px, 92%);
-  padding: 30px;
-  background: #111;
-  border: 1px solid #292929;
-  border-radius: 14px;
-  box-shadow: 0 15px 50px rgba(0,0,0,.5);
-}
-
-h1 {
-  margin: 0 0 8px;
-  font-size: 25px;
-}
-
-p {
-  color: #888;
-  margin-bottom: 25px;
-}
-
-input {
-  width: 100%;
-  padding: 13px;
-  margin-bottom: 12px;
-  background: #080808;
-  color: #fff;
-  border: 1px solid #333;
-  border-radius: 8px;
-  outline: none;
-}
-
-button {
-  width: 100%;
-  padding: 13px;
-  border: 0;
-  border-radius: 8px;
-  background: #fff;
-  color: #000;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-.error {
-  color: #ff6565;
-  margin-bottom: 15px;
-}
-</style>
-</head>
-
-<body>
-
-<div class="box">
-
-<h1>SINZU AI COMMAND CENTER</h1>
-
-<p>Dashboard authentication</p>
-
-${req.query.error
-  ? `<div class="error">Invalid username or password.</div>`
-  : ""}
-
-<form method="POST" action="/login">
-
-<input
-  type="text"
-  name="username"
-  placeholder="Username"
-  autocomplete="username"
-  required
->
-
-<input
-  type="password"
-  name="password"
-  placeholder="Password"
-  autocomplete="current-password"
-  required
->
-
-<button type="submit">
-  LOGIN
-</button>
-
-</form>
-
-</div>
-
-</body>
-</html>
-  `);
-});
-
-/*
- * ============================================================
- * LOGIN POST
- * ============================================================
- */
-
-app.post("/login", (req, res) => {
-  const username =
-    String(req.body.username || "");
-
-  const password =
-    String(req.body.password || "");
-
-  if (
-    username === ADMIN_USER &&
-    password === ADMIN_PASS
-  ) {
-    req.session.authenticated = true;
-
-    return req.session.save(error => {
-      if (error) {
-        console.error(
-          "[SESSION SAVE]",
-          error
-        );
-
-        return res.status(500).send(
-          "Session error."
-        );
-      }
-
+app.get(
+  "/login",
+  (req, res) => {
+    if (
+      req.session?.authenticated
+    ) {
       return res.redirect(
         "/dashboard"
       );
-    });
-  }
+    }
 
-  return res.redirect(
-    "/login?error=1"
-  );
-});
+    const error =
+      req.query.error
+        ? `
+          <div class="login-error">
+            Invalid username or password.
+          </div>
+        `
+        : "";
 
-/*
- * ============================================================
- * DASHBOARD
- * ============================================================
- */
-
-app.get(
-  "/dashboard",
-  requireAuth,
-  (req, res) => {
     res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -1363,7 +1331,7 @@ app.get(
   content="width=device-width, initial-scale=1.0"
 >
 
-<title>SINZU AI — Dashboard</title>
+<title>SINZU AI — Login</title>
 
 <style>
 
@@ -1371,128 +1339,244 @@ app.get(
   box-sizing: border-box;
 }
 
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+}
+
 body {
   margin: 0;
-  background: #080808;
-  color: #fff;
-  font-family: Arial, sans-serif;
-}
+  min-height: 100vh;
 
-.container {
-  width: min(900px, 94%);
-  margin: 35px auto;
-}
-
-.header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 15px;
+  justify-content: center;
+
+  padding: 20px;
+
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      #351014 0,
+      #12090b 28%,
+      #050505 65%
+    );
+
+  color: #fff;
+
+  font-family:
+    Inter,
+    Arial,
+    sans-serif;
+}
+
+body::before {
+  content: "";
+
+  position: fixed;
+  inset: 0;
+
+  pointer-events: none;
+
+  background:
+    linear-gradient(
+      rgba(255,255,255,.015) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(255,255,255,.015) 1px,
+      transparent 1px
+    );
+
+  background-size: 35px 35px;
+}
+
+.login-wrap {
+  width: 100%;
+  max-width: 430px;
+
+  position: relative;
+  z-index: 2;
+}
+
+.brand {
+  text-align: center;
   margin-bottom: 25px;
 }
 
-.title {
-  font-size: 26px;
-  font-weight: bold;
+.logo {
+  width: 72px;
+  height: 72px;
+
+  margin: auto;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 22px;
+
+  background:
+    linear-gradient(
+      145deg,
+      #ff334c,
+      #6e0714
+    );
+
+  box-shadow:
+    0 0 40px
+    rgba(255,30,55,.2);
+
+  font-size: 32px;
+  font-weight: 900;
 }
 
-.subtitle {
+.brand h1 {
+  margin:
+    17px 0 5px;
+
+  letter-spacing:
+    2px;
+
+  font-size: 25px;
+}
+
+.brand p {
+  margin: 0;
+
   color: #777;
-  margin-top: 5px;
-}
 
-.logout {
-  text-decoration: none;
-  color: #fff;
-  border: 1px solid #333;
-  padding: 10px 14px;
-  border-radius: 8px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns:
-    repeat(auto-fit, minmax(220px, 1fr));
-  gap: 15px;
-}
-
-.card {
-  background: #111;
-  border: 1px solid #292929;
-  border-radius: 14px;
-  padding: 20px;
-}
-
-.label {
-  color: #777;
   font-size: 13px;
-  margin-bottom: 8px;
 }
 
-.value {
-  font-size: 20px;
-  font-weight: bold;
-  word-break: break-word;
+.login-card {
+  background:
+    rgba(17,17,17,.88);
+
+  backdrop-filter:
+    blur(20px);
+
+  border:
+    1px solid
+    rgba(255,255,255,.08);
+
+  border-radius: 20px;
+
+  padding: 25px;
+
+  box-shadow:
+    0 30px 100px
+    rgba(0,0,0,.55);
 }
 
-.online {
-  color: #65ff91;
+.field {
+  margin-bottom: 15px;
 }
 
-.offline {
-  color: #ff6565;
+.field label {
+  display: block;
+
+  margin-bottom: 7px;
+
+  color: #888;
+
+  font-size: 12px;
+
+  text-transform:
+    uppercase;
+
+  letter-spacing:
+    1px;
 }
 
-.connecting {
-  color: #ffd45f;
-}
-
-textarea {
+.field input {
   width: 100%;
-  min-height: 230px;
-  resize: vertical;
-  background: #080808;
+
+  padding: 14px 15px;
+
+  background: #090909;
+
   color: #fff;
-  border: 1px solid #333;
-  border-radius: 10px;
-  padding: 14px;
-  font-family: monospace;
+
+  border:
+    1px solid
+    #292929;
+
+  border-radius: 11px;
+
   outline: none;
+
+  transition:
+    .2s;
 }
 
-button {
+.field input:focus {
+  border-color:
+    #e52b42;
+
+  box-shadow:
+    0 0 0 3px
+    rgba(229,43,66,.08);
+}
+
+.login-button {
+  width: 100%;
+
+  margin-top: 5px;
+
+  padding: 14px;
+
   border: 0;
-  padding: 12px 17px;
-  border-radius: 8px;
+
+  border-radius: 11px;
+
+  background:
+    linear-gradient(
+      135deg,
+      #ff344c,
+      #a70e21
+    );
+
+  color: #fff;
+
+  font-weight: 800;
+
   cursor: pointer;
-  font-weight: bold;
+
+  box-shadow:
+    0 10px 30px
+    rgba(190,15,40,.18);
 }
 
-.login-btn {
-  background: #fff;
-  color: #000;
-}
+.login-error {
+  margin-bottom: 15px;
 
-.logout-btn {
-  background: #351111;
-  color: #ff8888;
-}
+  padding: 11px;
 
-.status-box {
-  margin-top: 20px;
-  padding: 15px;
-  background: #0d0d0d;
-  border: 1px solid #292929;
-  border-radius: 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
+  border-radius: 9px;
 
-.warning {
-  color: #ffcc66;
+  background:
+    rgba(255,50,70,.08);
+
+  border:
+    1px solid
+    rgba(255,50,70,.2);
+
+  color: #ff7c89;
+
   font-size: 13px;
-  line-height: 1.5;
-  margin-top: 12px;
+}
+
+.footer {
+  text-align: center;
+
+  margin-top: 20px;
+
+  color: #444;
+
+  font-size: 11px;
 }
 
 </style>
@@ -1501,171 +1585,1901 @@ button {
 
 <body>
 
-<div class="container">
+<div class="login-wrap">
 
-<div class="header">
+  <div class="brand">
 
-<div>
-  <div class="title">
-    SINZU AI COMMAND CENTER
+    <div class="logo">
+      S
+    </div>
+
+    <h1>
+      SINZU AI
+    </h1>
+
+    <p>
+      COMMAND CENTER
+    </p>
+
   </div>
 
-  <div class="subtitle">
-    Messenger Bot Dashboard
+  <div class="login-card">
+
+    ${error}
+
+    <form
+      method="POST"
+      action="/login"
+    >
+
+      <div class="field">
+
+        <label>
+          Username
+        </label>
+
+        <input
+          type="text"
+          name="username"
+          placeholder="Enter username"
+          autocomplete="username"
+          required
+        >
+
+      </div>
+
+      <div class="field">
+
+        <label>
+          Password
+        </label>
+
+        <input
+          type="password"
+          name="password"
+          placeholder="Enter password"
+          autocomplete="current-password"
+          required
+        >
+
+      </div>
+
+      <button
+        class="login-button"
+        type="submit"
+      >
+        ENTER COMMAND CENTER
+      </button>
+
+    </form>
+
   </div>
+
+  <div class="footer">
+    SINZU AI • PRIVATE CONTROL PANEL
+  </div>
+
 </div>
 
-<a
-  class="logout"
-  href="/logout"
+</body>
+</html>
+    `);
+  }
+);
+
+/* ============================================================
+   LOGIN POST
+   ============================================================ */
+
+app.post(
+  "/login",
+  (req, res) => {
+    const username =
+      String(
+        req.body.username || ""
+      );
+
+    const password =
+      String(
+        req.body.password || ""
+      );
+
+    if (
+      username === ADMIN_USER &&
+      password === ADMIN_PASS
+    ) {
+      req.session.authenticated =
+        true;
+
+      return req.session.save(
+        error => {
+          if (error) {
+            addLog(
+              "ERROR",
+              `Dashboard session: ${error.message}`
+            );
+
+            return res
+              .status(500)
+              .send(
+                "Session error."
+              );
+          }
+
+          return res.redirect(
+            "/dashboard"
+          );
+        }
+      );
+    }
+
+    return res.redirect(
+      "/login?error=1"
+    );
+  }
+);
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+
+app.get(
+  "/dashboard",
+  requireAuth,
+  (req, res) => {
+    res.send(`
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0"
 >
-  Logout
-</a>
 
-</div>
+<title>SINZU AI — Command Center</title>
 
-<div class="grid">
+<style>
 
-<div class="card">
-  <div class="label">BOT ACCOUNT</div>
-  <div
-    class="value"
-    id="botName"
-  >
-    Loading...
+:root {
+  --bg: #050505;
+  --panel: rgba(16,16,17,.82);
+  --panel2: #0d0d0e;
+  --border: rgba(255,255,255,.08);
+  --text: #f4f4f4;
+  --muted: #777;
+  --red: #ff334d;
+  --red2: #a50d21;
+  --green: #45e28a;
+  --yellow: #ffd166;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+
+  min-height: 100vh;
+
+  background:
+    radial-gradient(
+      circle at 75% -10%,
+      rgba(164,12,32,.23),
+      transparent 35%
+    ),
+    radial-gradient(
+      circle at 5% 30%,
+      rgba(90,10,20,.14),
+      transparent 30%
+    ),
+    var(--bg);
+
+  color: var(--text);
+
+  font-family:
+    Inter,
+    Arial,
+    sans-serif;
+}
+
+body::before {
+  content: "";
+
+  position: fixed;
+  inset: 0;
+
+  pointer-events: none;
+
+  opacity: .45;
+
+  background:
+    linear-gradient(
+      rgba(255,255,255,.012) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(255,255,255,.012) 1px,
+      transparent 1px
+    );
+
+  background-size: 35px 35px;
+}
+
+/* =========================================================
+   APP
+   ========================================================= */
+
+.app {
+  position: relative;
+  z-index: 1;
+
+  width: min(
+    1250px,
+    94%
+  );
+
+  margin:
+    0 auto;
+
+  padding:
+    25px 0 50px;
+}
+
+/* =========================================================
+   TOPBAR
+   ========================================================= */
+
+.topbar {
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: 20px;
+
+  margin-bottom: 25px;
+
+  padding:
+    16px 18px;
+
+  background:
+    rgba(14,14,15,.78);
+
+  backdrop-filter:
+    blur(20px);
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius:
+    17px;
+
+  box-shadow:
+    0 20px 70px
+    rgba(0,0,0,.28);
+}
+
+.brand-area {
+  display: flex;
+
+  align-items: center;
+
+  gap: 13px;
+}
+
+.brand-icon {
+  width: 45px;
+  height: 45px;
+
+  flex: 0 0 45px;
+
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 13px;
+
+  background:
+    linear-gradient(
+      145deg,
+      #ff344d,
+      #740817
+    );
+
+  font-weight: 900;
+
+  box-shadow:
+    0 0 25px
+    rgba(255,35,60,.15);
+}
+
+.brand-title {
+  font-size: 16px;
+
+  font-weight: 900;
+
+  letter-spacing: 1.4px;
+}
+
+.brand-subtitle {
+  margin-top: 3px;
+
+  color: #666;
+
+  font-size: 11px;
+
+  letter-spacing: .7px;
+}
+
+.top-actions {
+  display: flex;
+
+  align-items: center;
+
+  gap: 9px;
+}
+
+.status-pill {
+  display: flex;
+
+  align-items: center;
+
+  gap: 7px;
+
+  padding:
+    8px 11px;
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius: 999px;
+
+  background:
+    rgba(255,255,255,.025);
+
+  color: #aaa;
+
+  font-size: 11px;
+
+  font-weight: 700;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+
+  border-radius: 50%;
+
+  background: #666;
+}
+
+.dot.online {
+  background:
+    var(--green);
+
+  box-shadow:
+    0 0 12px
+    rgba(69,226,138,.75);
+}
+
+.logout {
+  padding:
+    9px 12px;
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius: 9px;
+
+  color: #999;
+
+  text-decoration: none;
+
+  font-size: 11px;
+}
+
+.logout:hover {
+  color: #fff;
+
+  border-color:
+    rgba(255,255,255,.18);
+}
+
+/* =========================================================
+   HERO
+   ========================================================= */
+
+.hero {
+  position: relative;
+
+  overflow: hidden;
+
+  margin-bottom: 16px;
+
+  padding: 30px;
+
+  border:
+    1px solid
+    rgba(255,255,255,.08);
+
+  border-radius: 22px;
+
+  background:
+    linear-gradient(
+      120deg,
+      rgba(28,11,14,.96),
+      rgba(12,12,13,.92)
+    );
+
+  box-shadow:
+    0 30px 90px
+    rgba(0,0,0,.38);
+}
+
+.hero::after {
+  content: "";
+
+  position: absolute;
+
+  width: 280px;
+  height: 280px;
+
+  right: -100px;
+  top: -140px;
+
+  border-radius: 50%;
+
+  background:
+    rgba(255,35,60,.08);
+
+  filter:
+    blur(20px);
+}
+
+.hero-content {
+  position: relative;
+  z-index: 2;
+}
+
+.eyebrow {
+  color:
+    #e74b5c;
+
+  font-size: 10px;
+
+  font-weight: 900;
+
+  letter-spacing:
+    2.5px;
+
+  text-transform:
+    uppercase;
+}
+
+.hero h1 {
+  margin:
+    9px 0 6px;
+
+  font-size:
+    clamp(27px, 5vw, 43px);
+
+  line-height:
+    1.05;
+
+  letter-spacing:
+    -1.5px;
+}
+
+.hero p {
+  margin: 0;
+
+  max-width: 650px;
+
+  color: #777;
+
+  line-height:
+    1.6;
+
+  font-size: 13px;
+}
+
+/* =========================================================
+   STAT GRID
+   ========================================================= */
+
+.stats {
+  display: grid;
+
+  grid-template-columns:
+    repeat(4, 1fr);
+
+  gap: 13px;
+
+  margin-bottom: 16px;
+}
+
+.card {
+  background:
+    var(--panel);
+
+  backdrop-filter:
+    blur(18px);
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius:
+    17px;
+
+  box-shadow:
+    0 15px 50px
+    rgba(0,0,0,.18);
+}
+
+.stat-card {
+  padding: 19px;
+
+  min-height:
+    126px;
+
+  transition:
+    transform .2s,
+    border-color .2s;
+}
+
+.stat-card:hover {
+  transform:
+    translateY(-2px);
+
+  border-color:
+    rgba(255,255,255,.13);
+}
+
+.stat-top {
+  display: flex;
+
+  align-items: center;
+
+  justify-content:
+    space-between;
+}
+
+.stat-label {
+  color:
+    #666;
+
+  font-size:
+    10px;
+
+  font-weight:
+    800;
+
+  letter-spacing:
+    1.4px;
+}
+
+.stat-icon {
+  width: 31px;
+  height: 31px;
+
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  border-radius:
+    9px;
+
+  background:
+    rgba(255,255,255,.04);
+
+  color:
+    #aaa;
+
+  font-size:
+    13px;
+}
+
+.stat-value {
+  margin-top:
+    20px;
+
+  font-size:
+    19px;
+
+  font-weight:
+    850;
+
+  white-space:
+    nowrap;
+
+  overflow:
+    hidden;
+
+  text-overflow:
+    ellipsis;
+}
+
+.stat-meta {
+  margin-top:
+    5px;
+
+  color:
+    #555;
+
+  font-size:
+    10px;
+}
+
+.online-text {
+  color:
+    var(--green);
+}
+
+.offline-text {
+  color:
+    #ff6575;
+}
+
+.connecting-text {
+  color:
+    var(--yellow);
+}
+
+/* =========================================================
+   MAIN GRID
+   ========================================================= */
+
+.main-grid {
+  display: grid;
+
+  grid-template-columns:
+    1.5fr 1fr;
+
+  gap: 16px;
+}
+
+.section {
+  padding:
+    20px;
+}
+
+.section-head {
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: 10px;
+
+  margin-bottom:
+    17px;
+}
+
+.section-title {
+  font-size:
+    15px;
+
+  font-weight:
+    850;
+}
+
+.section-desc {
+  margin-top:
+    3px;
+
+  color:
+    #5f5f5f;
+
+  font-size:
+    11px;
+}
+
+/* =========================================================
+   SESSION LOGIN
+   ========================================================= */
+
+textarea {
+  width: 100%;
+
+  min-height:
+    205px;
+
+  resize:
+    vertical;
+
+  padding:
+    14px;
+
+  background:
+    #080808;
+
+  color:
+    #ddd;
+
+  border:
+    1px solid
+    #252525;
+
+  border-radius:
+    12px;
+
+  outline:
+    none;
+
+  font-family:
+    "Courier New",
+    monospace;
+
+  font-size:
+    11px;
+
+  line-height:
+    1.5;
+
+  transition:
+    .2s;
+}
+
+textarea:focus {
+  border-color:
+    rgba(255,50,70,.5);
+
+  box-shadow:
+    0 0 0 3px
+    rgba(255,50,70,.06);
+}
+
+.security-note {
+  display: flex;
+
+  gap: 10px;
+
+  margin-top:
+    12px;
+
+  padding:
+    11px 12px;
+
+  border-radius:
+    10px;
+
+  background:
+    rgba(255,190,70,.035);
+
+  border:
+    1px solid
+    rgba(255,190,70,.09);
+
+  color:
+    #8e7951;
+
+  font-size:
+    10px;
+
+  line-height:
+    1.5;
+}
+
+.buttons {
+  display: flex;
+
+  gap: 9px;
+
+  flex-wrap:
+    wrap;
+
+  margin-top:
+    13px;
+}
+
+button {
+  border:
+    0;
+
+  cursor:
+    pointer;
+
+  border-radius:
+    10px;
+
+  padding:
+    11px 15px;
+
+  font-size:
+    11px;
+
+  font-weight:
+    850;
+
+  transition:
+    transform .15s,
+    opacity .15s;
+}
+
+button:active {
+  transform:
+    scale(.98);
+}
+
+.primary {
+  color:
+    #fff;
+
+  background:
+    linear-gradient(
+      135deg,
+      #ff344d,
+      #a70d21
+    );
+
+  box-shadow:
+    0 10px 25px
+    rgba(180,15,35,.17);
+}
+
+.secondary {
+  color:
+    #bbb;
+
+  background:
+    #181819;
+
+  border:
+    1px solid
+    #292929;
+}
+
+.danger {
+  color:
+    #ff7a88;
+
+  background:
+    rgba(130,10,25,.15);
+
+  border:
+    1px solid
+    rgba(255,50,70,.12);
+}
+
+/* =========================================================
+   MODULES
+   ========================================================= */
+
+.modules {
+  display:
+    grid;
+
+  grid-template-columns:
+    repeat(2, 1fr);
+
+  gap:
+    10px;
+}
+
+.module {
+  padding:
+    15px;
+
+  background:
+    #0c0c0d;
+
+  border:
+    1px solid
+    #202021;
+
+  border-radius:
+    12px;
+}
+
+.module-head {
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    space-between;
+}
+
+.module-name {
+  font-size:
+    11px;
+
+  font-weight:
+    800;
+}
+
+.module-status {
+  padding:
+    4px 7px;
+
+  border-radius:
+    999px;
+
+  background:
+    rgba(69,226,138,.06);
+
+  color:
+    var(--green);
+
+  font-size:
+    8px;
+
+  font-weight:
+    900;
+}
+
+.module-desc {
+  margin-top:
+    8px;
+
+  color:
+    #5c5c5c;
+
+  font-size:
+    9px;
+
+  line-height:
+    1.5;
+}
+
+/* =========================================================
+   LOGS
+   ========================================================= */
+
+.logs {
+  height:
+    290px;
+
+  overflow:
+    auto;
+
+  background:
+    #080808;
+
+  border:
+    1px solid
+    #202020;
+
+  border-radius:
+    12px;
+
+  padding:
+    8px;
+}
+
+.log {
+  display:
+    grid;
+
+  grid-template-columns:
+    68px 76px 1fr;
+
+  gap:
+    7px;
+
+  padding:
+    9px;
+
+  border-bottom:
+    1px solid
+    rgba(255,255,255,.035);
+
+  font-family:
+    "Courier New",
+    monospace;
+
+  font-size:
+    9px;
+}
+
+.log:last-child {
+  border-bottom:
+    0;
+}
+
+.log-time {
+  color:
+    #444;
+}
+
+.log-type {
+  color:
+    #b34b59;
+
+  font-weight:
+    800;
+}
+
+.log-message {
+  color:
+    #8a8a8a;
+
+  word-break:
+    break-word;
+}
+
+/* =========================================================
+   QUICK COMMANDS
+   ========================================================= */
+
+.command-list {
+  display:
+    grid;
+
+  gap:
+    8px;
+}
+
+.command {
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    space-between;
+
+  padding:
+    11px 12px;
+
+  background:
+    #0c0c0d;
+
+  border:
+    1px solid
+    #202020;
+
+  border-radius:
+    10px;
+}
+
+.command code {
+  color:
+    #d2d2d2;
+
+  font-size:
+    10px;
+}
+
+.command span {
+  color:
+    #555;
+
+  font-size:
+    9px;
+}
+
+/* =========================================================
+   FOOTER
+   ========================================================= */
+
+.footer {
+  margin-top:
+    20px;
+
+  text-align:
+    center;
+
+  color:
+    #3d3d3d;
+
+  font-size:
+    10px;
+
+  letter-spacing:
+    .5px;
+}
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (
+  max-width: 900px
+) {
+
+  .stats {
+    grid-template-columns:
+      repeat(2, 1fr);
+  }
+
+  .main-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+}
+
+@media (
+  max-width: 600px
+) {
+
+  .app {
+    width:
+      94%;
+  }
+
+  .topbar {
+    align-items:
+      flex-start;
+
+    flex-direction:
+      column;
+  }
+
+  .top-actions {
+    width:
+      100%;
+
+    justify-content:
+      space-between;
+  }
+
+  .hero {
+    padding:
+      23px;
+  }
+
+  .stats {
+    grid-template-columns:
+      1fr 1fr;
+
+    gap:
+      9px;
+  }
+
+  .stat-card {
+    min-height:
+      112px;
+
+    padding:
+      14px;
+  }
+
+  .stat-value {
+    font-size:
+      15px;
+  }
+
+  .section {
+    padding:
+      15px;
+  }
+
+  .modules {
+    grid-template-columns:
+      1fr;
+  }
+
+  .log {
+    grid-template-columns:
+      55px 62px 1fr;
+
+    font-size:
+      8px;
+  }
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="app">
+
+  <!-- TOPBAR -->
+
+  <header class="topbar">
+
+    <div class="brand-area">
+
+      <div class="brand-icon">
+        S
+      </div>
+
+      <div>
+
+        <div class="brand-title">
+          SINZU AI
+        </div>
+
+        <div class="brand-subtitle">
+          COMMAND CENTER
+        </div>
+
+      </div>
+
+    </div>
+
+    <div class="top-actions">
+
+      <div class="status-pill">
+
+        <span
+          class="dot"
+          id="topDot"
+        ></span>
+
+        <span id="topStatus">
+          CHECKING
+        </span>
+
+      </div>
+
+      <a
+        href="/logout"
+        class="logout"
+      >
+        LOGOUT
+      </a>
+
+    </div>
+
+  </header>
+
+  <!-- HERO -->
+
+  <section class="hero">
+
+    <div class="hero-content">
+
+      <div class="eyebrow">
+        Messenger Control System
+      </div>
+
+      <h1>
+        Command Center
+      </h1>
+
+      <p>
+        Monitor the bot, manage the Messenger
+        session, and keep your protection
+        modules connected from one dashboard.
+      </p>
+
+    </div>
+
+  </section>
+
+  <!-- STATS -->
+
+  <section class="stats">
+
+    <div class="card stat-card">
+
+      <div class="stat-top">
+
+        <div class="stat-label">
+          BOT ACCOUNT
+        </div>
+
+        <div class="stat-icon">
+          ◉
+        </div>
+
+      </div>
+
+      <div
+        class="stat-value"
+        id="botName"
+      >
+        Loading...
+      </div>
+
+      <div class="stat-meta">
+        Messenger account
+      </div>
+
+    </div>
+
+    <div class="card stat-card">
+
+      <div class="stat-top">
+
+        <div class="stat-label">
+          BOT UID
+        </div>
+
+        <div class="stat-icon">
+          #
+        </div>
+
+      </div>
+
+      <div
+        class="stat-value"
+        id="botUID"
+      >
+        —
+      </div>
+
+      <div class="stat-meta">
+        Current account identifier
+      </div>
+
+    </div>
+
+    <div class="card stat-card">
+
+      <div class="stat-top">
+
+        <div class="stat-label">
+          CONNECTION
+        </div>
+
+        <div class="stat-icon">
+          ↯
+        </div>
+
+      </div>
+
+      <div
+        class="stat-value"
+        id="botStatus"
+      >
+        Checking
+      </div>
+
+      <div class="stat-meta">
+        Live bot state
+      </div>
+
+    </div>
+
+    <div class="card stat-card">
+
+      <div class="stat-top">
+
+        <div class="stat-label">
+          UPTIME
+        </div>
+
+        <div class="stat-icon">
+          ◷
+        </div>
+
+      </div>
+
+      <div
+        class="stat-value"
+        id="uptime"
+      >
+        0s
+      </div>
+
+      <div class="stat-meta">
+        Current process session
+      </div>
+
+    </div>
+
+  </section>
+
+  <!-- MAIN -->
+
+  <div class="main-grid">
+
+    <!-- LEFT -->
+
+    <div>
+
+      <!-- LOGIN -->
+
+      <section class="card section">
+
+        <div class="section-head">
+
+          <div>
+
+            <div class="section-title">
+              Messenger Session
+            </div>
+
+            <div class="section-desc">
+              Connect the bot using AppState / C3C.
+            </div>
+
+          </div>
+
+        </div>
+
+        <textarea
+          id="appstate"
+          placeholder="Paste AppState / C3C here..."
+          spellcheck="false"
+        ></textarea>
+
+        <div class="security-note">
+
+          <span>
+            🔐
+          </span>
+
+          <span>
+            Keep your AppState/C3C private.
+            Do not publish it on GitHub or send
+            it to other people.
+          </span>
+
+        </div>
+
+        <div class="buttons">
+
+          <button
+            class="primary"
+            onclick="loginBot()"
+          >
+            CONNECT BOT
+          </button>
+
+          <button
+            class="secondary"
+            onclick="clearSessionInput()"
+          >
+            CLEAR
+          </button>
+
+          <button
+            class="danger"
+            onclick="logoutBot()"
+          >
+            DISCONNECT
+          </button>
+
+        </div>
+
+        <div
+          class="section-desc"
+          id="actionMessage"
+          style="margin-top:12px;"
+        >
+          Ready.
+
+        </div>
+
+      </section>
+
+      <!-- ACTIVITY -->
+
+      <section
+        class="card section"
+        style="margin-top:16px;"
+      >
+
+        <div class="section-head">
+
+          <div>
+
+            <div class="section-title">
+              System Activity
+            </div>
+
+            <div class="section-desc">
+              Recent bot and dashboard events.
+            </div>
+
+          </div>
+
+          <button
+            class="secondary"
+            onclick="refreshLogs()"
+          >
+            REFRESH
+          </button>
+
+        </div>
+
+        <div
+          class="logs"
+          id="logs"
+        >
+          Loading...
+        </div>
+
+      </section>
+
+    </div>
+
+    <!-- RIGHT -->
+
+    <div>
+
+      <!-- MODULES -->
+
+      <section class="card section">
+
+        <div class="section-head">
+
+          <div>
+
+            <div class="section-title">
+              Protection Modules
+            </div>
+
+            <div class="section-desc">
+              Loaded modules connected to index.js.
+            </div>
+
+          </div>
+
+        </div>
+
+        <div class="modules">
+
+          <div class="module">
+
+            <div class="module-head">
+
+              <div class="module-name">
+                Nickname Protection
+              </div>
+
+              <div class="module-status">
+                LOADED
+              </div>
+
+            </div>
+
+            <div class="module-desc">
+              Restores protected nicknames when
+              supported Messenger events are received.
+            </div>
+
+          </div>
+
+          <div class="module">
+
+            <div class="module-head">
+
+              <div class="module-name">
+                GC Name Lock
+              </div>
+
+              <div class="module-status">
+                LOADED
+              </div>
+
+            </div>
+
+            <div class="module-desc">
+              Keeps the configured group name
+              protected when supported events occur.
+            </div>
+
+          </div>
+
+          <div class="module">
+
+            <div class="module-head">
+
+              <div class="module-name">
+                Human Banat
+              </div>
+
+              <div class="module-status">
+                LOADED
+              </div>
+
+            </div>
+
+            <div class="module-desc">
+              Existing human-style reply system
+              remains connected.
+            </div>
+
+          </div>
+
+          <div class="module">
+
+            <div class="module-head">
+
+              <div class="module-name">
+                Trigger System
+              </div>
+
+              <div class="module-status">
+                LOADED
+              </div>
+
+            </div>
+
+            <div class="module-desc">
+              Existing trigger reply system remains
+              connected to the message handler.
+            </div>
+
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- QUICK COMMANDS -->
+
+      <section
+        class="card section"
+        style="margin-top:16px;"
+      >
+
+        <div class="section-head">
+
+          <div>
+
+            <div class="section-title">
+              Quick Commands
+            </div>
+
+            <div class="section-desc">
+              Commands available inside Messenger.
+            </div>
+
+          </div>
+
+        </div>
+
+        <div class="command-list">
+
+          <div class="command">
+
+            <code>
+              !setallnick &lt;nickname&gt;
+            </code>
+
+            <span>
+              ADMIN
+            </span>
+
+          </div>
+
+          <div class="command">
+
+            <code>
+              !restoreallnick
+            </code>
+
+            <span>
+              ADMIN
+            </span>
+
+          </div>
+
+          <div class="command">
+
+            <code>
+              !nickprotect
+            </code>
+
+            <span>
+              STATUS
+            </span>
+
+          </div>
+
+          <div class="command">
+
+            <code>
+              !lockgcname &lt;name&gt;
+            </code>
+
+            <span>
+              ADMIN
+            </span>
+
+          </div>
+
+          <div class="command">
+
+            <code>
+              !unlockgcname
+            </code>
+
+            <span>
+              ADMIN
+            </span>
+
+          </div>
+
+          <div class="command">
+
+            <code>
+              !gcnameprotect
+            </code>
+
+            <span>
+              STATUS
+            </span>
+
+          </div>
+
+          <div class="command">
+
+            <code>
+              /banat on
+            </code>
+
+            <span>
+              ADMIN
+            </span>
+
+          </div>
+
+          <div class="command">
+
+            <code>
+              /banat off
+            </code>
+
+            <span>
+              ADMIN
+            </span>
+
+          </div>
+
+        </div>
+
+      </section>
+
+    </div>
+
   </div>
-</div>
 
-<div class="card">
-  <div class="label">BOT UID</div>
-  <div
-    class="value"
-    id="botUID"
-  >
-    Loading...
+  <div class="footer">
+    SINZU AI • COMMAND CENTER • LIVE DASHBOARD
   </div>
-</div>
-
-<div class="card">
-  <div class="label">MESSENGER STATUS</div>
-  <div
-    class="value"
-    id="botStatus"
-  >
-    Loading...
-  </div>
-</div>
-
-<div class="card">
-  <div class="label">UPTIME</div>
-  <div
-    class="value"
-    id="uptime"
-  >
-    Loading...
-  </div>
-</div>
-
-</div>
-
-<div class="card" style="margin-top:15px;">
-
-<h2>Facebook / Messenger Login</h2>
-
-<p style="color:#777;">
-Paste your AppState/C3C session below.
-</p>
-
-<textarea
-  id="appstate"
-  placeholder='Paste AppState JSON or cookie/session value here...'
-></textarea>
-
-<div class="warning">
-Keep your AppState/C3C private. Anyone who obtains a
-valid session may potentially access the account.
-</div>
-
-<br>
-
-<button
-  class="login-btn"
-  onclick="loginBot()"
->
-  LOGIN BOT
-</button>
-
-<button
-  class="logout-btn"
-  onclick="logoutBot()"
-  style="margin-left:8px;"
->
-  BOT LOGOUT
-</button>
-
-<div
-  class="status-box"
-  id="message"
->
-Ready.
-</div>
-
-</div>
 
 </div>
 
 <script>
+
+function setActionMessage(text) {
+  document.getElementById(
+    "actionMessage"
+  ).textContent = text;
+}
 
 async function refreshStatus() {
 
   try {
 
     const response =
-      await fetch("/api/status");
+      await fetch(
+        "/api/status",
+        {
+          cache: "no-store"
+        }
+      );
+
+    if (!response.ok) {
+      throw new Error(
+        "Status request failed."
+      );
+    }
 
     const data =
       await response.json();
 
     const name =
-      document.getElementById("botName");
+      document.getElementById(
+        "botName"
+      );
 
     const uid =
-      document.getElementById("botUID");
+      document.getElementById(
+        "botUID"
+      );
 
     const status =
-      document.getElementById("botStatus");
+      document.getElementById(
+        "botStatus"
+      );
 
     const uptime =
-      document.getElementById("uptime");
+      document.getElementById(
+        "uptime"
+      );
+
+    const topStatus =
+      document.getElementById(
+        "topStatus"
+      );
+
+    const topDot =
+      document.getElementById(
+        "topDot"
+      );
 
     name.textContent =
-      data.name || "Not logged in";
+      data.name ||
+      "Not logged in";
 
     uid.textContent =
-      data.uid || "—";
+      data.uid ||
+      "—";
 
     status.textContent =
-      data.status || "offline";
+      data.status ||
+      "offline";
 
     uptime.textContent =
-      data.uptime || "0s";
+      data.uptime ||
+      "0s";
 
     status.className =
-      "value " +
-      (
-        data.status === "online"
-          ? "online"
-          : data.status === "connecting"
-          ? "connecting"
-          : "offline"
+      "stat-value";
+
+    if (
+      data.status === "online"
+    ) {
+      status.classList.add(
+        "online-text"
       );
+
+      topStatus.textContent =
+        "ONLINE";
+
+      topDot.classList.add(
+        "online"
+      );
+
+    } else if (
+      data.status === "connecting"
+    ) {
+
+      status.classList.add(
+        "connecting-text"
+      );
+
+      topStatus.textContent =
+        "CONNECTING";
+
+      topDot.classList.remove(
+        "online"
+      );
+
+    } else {
+
+      status.classList.add(
+        "offline-text"
+      );
+
+      topStatus.textContent =
+        "OFFLINE";
+
+      topDot.classList.remove(
+        "online"
+      );
+
+    }
 
   } catch (error) {
 
     document.getElementById(
-      "message"
+      "topStatus"
     ).textContent =
-      "Unable to read bot status.";
+      "ERROR";
 
   }
 
@@ -1678,25 +3492,21 @@ async function loginBot() {
       "appstate"
     );
 
-  const message =
-    document.getElementById(
-      "message"
-    );
-
   const value =
     textarea.value.trim();
 
   if (!value) {
 
-    message.textContent =
-      "Paste your AppState/C3C first.";
+    setActionMessage(
+      "Paste your AppState/C3C first."
+    );
 
     return;
-
   }
 
-  message.textContent =
-    "Logging in...";
+  setActionMessage(
+    "Connecting to Messenger..."
+  );
 
   try {
 
@@ -1705,13 +3515,16 @@ async function loginBot() {
         "/bot-login",
         {
           method: "POST",
+
           headers: {
             "Content-Type":
               "application/json"
           },
-          body: JSON.stringify({
-            appstate: value
-          })
+
+          body:
+            JSON.stringify({
+              appstate: value
+            })
         }
       );
 
@@ -1719,26 +3532,32 @@ async function loginBot() {
       await response.json();
 
     if (!response.ok) {
-
       throw new Error(
         data.error ||
         "Login failed."
       );
-
     }
-
-    message.textContent =
-      "Bot successfully logged in.";
 
     textarea.value = "";
 
-    refreshStatus();
+    setActionMessage(
+      "Connected successfully as " +
+      (
+        data.name ||
+        "Messenger Bot"
+      ) +
+      "."
+    );
+
+    await refreshStatus();
+    await refreshLogs();
 
   } catch (error) {
 
-    message.textContent =
+    setActionMessage(
       "Login failed: " +
-      error.message;
+      error.message
+    );
 
     refreshStatus();
 
@@ -1746,12 +3565,23 @@ async function loginBot() {
 
 }
 
+function clearSessionInput() {
+
+  document.getElementById(
+    "appstate"
+  ).value = "";
+
+  setActionMessage(
+    "Input cleared."
+  );
+
+}
+
 async function logoutBot() {
 
-  const message =
-    document.getElementById(
-      "message"
-    );
+  setActionMessage(
+    "Disconnecting bot..."
+  );
 
   try {
 
@@ -1766,26 +3596,136 @@ async function logoutBot() {
     const data =
       await response.json();
 
-    message.textContent =
+    setActionMessage(
       data.message ||
-      "Bot logged out.";
+      "Bot disconnected."
+    );
 
     refreshStatus();
+    refreshLogs();
 
   } catch (error) {
 
-    message.textContent =
-      "Logout failed.";
+    setActionMessage(
+      "Disconnect failed."
+    );
 
   }
 
 }
 
+async function refreshLogs() {
+
+  const container =
+    document.getElementById(
+      "logs"
+    );
+
+  try {
+
+    const response =
+      await fetch(
+        "/api/logs",
+        {
+          cache: "no-store"
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (
+      !data.logs ||
+      !data.logs.length
+    ) {
+
+      container.innerHTML =
+        '<div style="padding:12px;color:#444;font-size:10px;">No activity yet.</div>';
+
+      return;
+    }
+
+    container.innerHTML =
+      data.logs
+        .map(log => {
+
+          const date =
+            new Date(
+              log.time
+            );
+
+          const time =
+            date.toLocaleTimeString();
+
+          return `
+            <div class="log">
+
+              <div class="log-time">
+                ${escapeText(time)}
+              </div>
+
+              <div class="log-type">
+                ${escapeText(log.type)}
+              </div>
+
+              <div class="log-message">
+                ${escapeText(log.message)}
+              </div>
+
+            </div>
+          `;
+
+        })
+        .join("");
+
+  } catch (error) {
+
+    container.innerHTML =
+      '<div style="padding:12px;color:#555;font-size:10px;">Unable to load logs.</div>';
+
+  }
+
+}
+
+function escapeText(value) {
+
+  return String(
+    value ?? ""
+  )
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&#039;"
+    );
+
+}
+
 refreshStatus();
+refreshLogs();
 
 setInterval(
   refreshStatus,
   3000
+);
+
+setInterval(
+  refreshLogs,
+  5000
 );
 
 </script>
@@ -1796,11 +3736,44 @@ setInterval(
   }
 );
 
-/*
- * ============================================================
- * BOT LOGIN API
- * ============================================================
- */
+/* ============================================================
+   STATUS API
+   ============================================================ */
+
+app.get(
+  "/api/status",
+  requireAuth,
+  (req, res) => {
+    res.json({
+      name: botName,
+      uid: botUserID,
+      status: botStatus,
+      error: botError,
+      uptime: uptimeText(),
+      loggedIn: Boolean(botApi),
+      connecting: botConnecting,
+      protection: getProtectionStatus()
+    });
+  }
+);
+
+/* ============================================================
+   LOG API
+   ============================================================ */
+
+app.get(
+  "/api/logs",
+  requireAuth,
+  (req, res) => {
+    res.json({
+      logs: systemLogs
+    });
+  }
+);
+
+/* ============================================================
+   BOT LOGIN API
+   ============================================================ */
 
 app.post(
   "/bot-login",
@@ -1828,28 +3801,33 @@ app.post(
         await loginBot(input);
 
       return res.json(result);
+
     } catch (error) {
-      return res.status(500).json({
-        error:
-          error?.errorDescription ||
-          error?.message ||
-          String(error)
-      });
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error?.errorDescription ||
+            error?.message ||
+            String(error)
+        });
+
     }
   }
 );
 
-/*
- * ============================================================
- * BOT LOGOUT
- * ============================================================
- */
+/* ============================================================
+   BOT LOGOUT
+   ============================================================ */
 
 app.post(
   "/bot-logout",
   requireAuth,
   (req, res) => {
+
     try {
+
       if (
         botApi &&
         typeof botApi.logout ===
@@ -1862,100 +3840,104 @@ app.post(
 
       botApi = null;
       botUserID = null;
-      botName = "Not logged in";
-      botStatus = "offline";
+      botName =
+        "Not logged in";
+      botStatus =
+        "offline";
       botError = null;
       botLoginAt = null;
       botConnecting = false;
 
+      addLog(
+        "BOT",
+        "Bot disconnected from dashboard."
+      );
+
       return res.json({
         success: true,
         message:
-          "Bot logged out."
+          "Bot disconnected."
       });
+
     } catch (error) {
-      return res.status(500).json({
-        error: error.message
-      });
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message
+        });
+
     }
+
   }
 );
 
-/*
- * ============================================================
- * STATUS API
- * ============================================================
- */
-
-app.get(
-  "/api/status",
-  requireAuth,
-  (req, res) => {
-    res.json({
-      name: botName,
-      uid: botUserID,
-      status: botStatus,
-      error: botError,
-      uptime: uptimeText(),
-      loggedIn: Boolean(botApi),
-      connecting: botConnecting
-    });
-  }
-);
-
-/*
- * ============================================================
- * DASHBOARD LOGOUT
- * ============================================================
- */
+/* ============================================================
+   DASHBOARD LOGOUT
+   ============================================================ */
 
 app.get(
   "/logout",
   (req, res) => {
-    req.session.destroy(() => {
-      res.redirect("/login");
-    });
+
+    req.session.destroy(
+      () => {
+        res.redirect(
+          "/login"
+        );
+      }
+    );
+
   }
 );
 
-/*
- * ============================================================
- * ROOT
- * ============================================================
- */
+/* ============================================================
+   ROOT
+   ============================================================ */
 
-app.get("/", (req, res) => {
-  if (req.session?.authenticated) {
-    return res.redirect("/dashboard");
+app.get(
+  "/",
+  (req, res) => {
+
+    if (
+      req.session?.authenticated
+    ) {
+      return res.redirect(
+        "/dashboard"
+      );
+    }
+
+    return res.redirect(
+      "/login"
+    );
+
   }
+);
 
-  return res.redirect("/login");
-});
-
-/*
- * ============================================================
- * SERVER
- * ============================================================
- */
+/* ============================================================
+   SERVER
+   ============================================================ */
 
 server.listen(
   PORT,
   "0.0.0.0",
   () => {
+
     console.log(
-      "============================================"
+      "=============================================="
     );
 
     console.log(
-      "       SINZU AI COMMAND CENTER"
+      "          SINZU AI COMMAND CENTER"
     );
 
     console.log(
-      "============================================"
+      "=============================================="
     );
 
     console.log(
-      `[SERVER] Listening on port ${PORT}`
+      `[SERVER] Port: ${PORT}`
     );
 
     console.log(
@@ -1968,67 +3950,82 @@ server.listen(
 
     console.log(
       `[BANAT] Default: ${
-        DEFAULT_ON ? "ON" : "OFF"
+        DEFAULT_ON
+          ? "ON"
+          : "OFF"
       }`
     );
 
     console.log(
-      "[NICKNAME] Protection module loaded."
+      "[MODULE] setallnick.js loaded."
     );
 
     console.log(
-      "[GC NAME] Protection module loaded."
+      "[MODULE] gcname-lock.js loaded."
     );
 
     console.log(
-      "============================================"
+      "=============================================="
     );
 
-    /*
-     * ==========================================================
-     * AUTO LOGIN FROM SAVED APPSTATE
-     * ==========================================================
-     */
+    addLog(
+      "SERVER",
+      `Command Center started on port ${PORT}`
+    );
+
+    /* ------------------------------------------
+       AUTO LOGIN
+       ------------------------------------------ */
 
     const savedSession =
       getSavedSession();
 
     if (savedSession) {
-      console.log(
-        "[BOT] Saved AppState found. Starting login..."
+
+      addLog(
+        "LOGIN",
+        "Saved Messenger session detected."
       );
 
-      loginBot(savedSession)
+      loginBot(
+        savedSession
+      )
         .then(result => {
-          console.log(
-            `[BOT] Auto-login successful: ${result.name} (${result.uid})`
+
+          addLog(
+            "SUCCESS",
+            `Auto-login successful: ${result.name}`
           );
+
         })
         .catch(error => {
-          console.error(
-            "[BOT] Auto-login failed:",
-            error?.errorDescription ||
-            error?.message ||
-            error
+
+          addLog(
+            "LOGIN ERROR",
+            `Auto-login failed: ${
+              error?.errorDescription ||
+              error?.message ||
+              error
+            }`
           );
+
         });
+
     } else {
-      console.log(
-        "[BOT] No saved AppState found."
+
+      addLog(
+        "LOGIN",
+        "No saved session. Login from dashboard."
       );
 
-      console.log(
-        "[BOT] Login from the dashboard."
-      );
     }
+
   }
 );
 
-/*
- * ============================================================
- * EXPORTS
- * ============================================================
- */
+/* ============================================================
+   EXPORTS
+   ============================================================ */
 
 module.exports = {
   trafficSendMessage,
@@ -2036,30 +4033,3 @@ module.exports = {
   handleBanatCommand,
   loginBot
 };
-
-⚠️ Important: This assumes your existing "setallnick.js" and "gcname-lock.js" are already in the same root folder as "index.js", and both export "handleCommand" plus their protection function.
-
-Your root should look like:
-
-Cresi/
-├── index.js
-├── package.json
-├── triggers.js
-├── banat-human.js
-├── banat-targeting.js
-├── setallnick.js
-├── gcname-lock.js
-└── appstate.json        ← automatically created after successful login
-
-Dashboard login: "admin" / "halimaw123".
-
-Commands connected:
-
-- "!setallnick <nickname>"
-- "!restoreallnick"
-- "!nickprotect"
-- "!lockgcname <name>"
-- "!unlockgcname"
-- "!gcnameprotect"
-
-Hindi ko ginalaw ang intended "triggers.js", "banat-human.js", at "banat-targeting.js" logic. Also, keep your AppState/C3C private and don't commit "appstate.json" to a public GitHub repo.
