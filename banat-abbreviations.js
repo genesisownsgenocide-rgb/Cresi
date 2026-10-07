@@ -1,0 +1,46 @@
+"use strict";
+
+// Local texting dictionary. No AI or external language service is used.
+const BANAT_SHORTHANDS = Object.freeze({
+  "you are": ["u r"], "you're": ["ur"], "youre": ["ur"], "you": ["u"], "your": ["ur"],
+  "are": ["r"], "because": ["bc", "cuz"], "though": ["tho"], "right now": ["rn"],
+  "probably": ["prob", "probs"], "something": ["smth"], "someone": ["s1"], "about": ["abt"],
+  "really": ["rly", "rlly"], "just": ["js", "jus"], "please": ["pls", "plz"], "people": ["ppl"],
+  "message": ["msg"], "tomorrow": ["tmr", "tmrw"], "tonight": ["tn"], "today": ["tdy"],
+  "before": ["b4"], "without": ["w/o"], "with": ["w/"], "what": ["wat"], "why": ["y"],
+  "okay": ["ok", "k"], "thanks": ["thx", "ty"], "thank you": ["ty"], "no problem": ["np"],
+  "of course": ["ofc"], "never mind": ["nvm"], "for real": ["fr", "frfr"],
+  "not gonna lie": ["ngl"], "to be honest": ["tbh"], "by the way": ["btw"],
+  "i don't know": ["idk"], "i dont know": ["idk"], "i don't care": ["idc"], "i dont care": ["idc"],
+  "what are you doing": ["wyd"], "what do you mean": ["wdym"], "what about you": ["wbu"],
+  "where are you": ["wya"], "on my way": ["omw"], "hit me up": ["hmu"], "let me know": ["lmk"],
+  "I know, right": ["ikr"], "oh my god": ["omg"], "shaking my head": ["smh"],
+  "I swear to god": ["istg"], "on god": ["ong"], "if you know you know": ["iykyk"],
+  "as soon as possible": ["asap"], "for your information": ["fyi"], "in my opinion": ["imo"],
+  "just kidding": ["jk"], "be right back": ["brb"], "gotta go": ["gtg"], "good game": ["gg"],
+  "good luck": ["gl"], "have fun": ["hf"], "what's up": ["sup", "wsup"], "what is up": ["sup", "wsup"],
+  "baby": ["bby"], "brother": ["bro"], "sister": ["sis"], "friend": ["fr"], "favorite": ["fav"],
+  "information": ["info"], "conversation": ["convo"], "argument": ["arg"], "question": ["q"],
+  "reply": ["rply"], "picture": ["pic"], "video": ["vid"], "notification": ["notif"],
+  "common sense": ["cs"], "confidence": ["conf"], "attention": ["attn"], "problem": ["prob"],
+  "little": ["lil"], "nothing": ["nthn"], "anything": ["anythn"], "everything": ["evrythn"],
+  "everyone": ["every1", "evryone"], "anyone": ["any1"],
+  "hindi": ["di"], "bakit": ["bkt"], "parang": ["prang"], "talaga": ["tlga"], "para": ["pra"],
+  "kapag": ["kpg"], "walang": ["wlang"], "lang": ["lng"], "ikaw": ["u"], "ganyan": ["gnyan"],
+  "kailangan": ["kylngn"], "muna": ["mna"], "tuloy": ["tly"], "gusto": ["gsto"], "maintindihan": ["mntindihan"],
+  "nakakatuwa": ["nkakatuwa"], "makulit": ["mkulit"], "magsalita": ["mgsalita"], "sinasabi": ["snbbi"],
+  "sobrang": ["sbrng"], "marami": ["mrmi"], "ganun": ["gnun"], "ngayon": ["ngyn"], "mamaya": ["mmya"],
+  "bago": ["bgo"], "ulit": ["ult"], "siguro": ["sguro"], "kasi": ["ksi"], "naman": ["nmn"],
+  "rin": ["rn"], "din": ["dn"], "dahil": ["dhl"], "pero": ["pro"], "saan": ["san"],
+  "maganda": ["mgnda"], "magaling": ["mglng"], "tama": ["tm"], "mali": ["mli"], "sagot": ["sgot"], "tanong": ["tnong"],
+  "I am": ["im", "i'm"], "i am": ["im", "i'm"], "I will": ["ill", "i'll"], "i will": ["ill", "i'll"],
+  "I have": ["ive", "i've"], "i have": ["ive", "i've"], "I want to": ["wanna"], "going to": ["gonna"],
+  "got to": ["gotta"], "kind of": ["kinda"], "let me": ["lemme"], "give me": ["gimme"],
+  "come on": ["cmon"], "alright": ["aight", "alr"], "all right": ["alr", "aight"],
+  "good morning": ["gm"], "good night": ["gn"], "see you later": ["c u l8r"], "talk to you later": ["ttyl"],
+  "take care": ["tc"], "thank you so much": ["tysm"], "congratulations": ["congrats"],
+  "definitely": ["def", "deff"], "especially": ["esp"], "actually": ["acc"], "you know": ["yk"],
+  "I guess": ["ig"], "i guess": ["ig"], "love you": ["ly"], "miss you": ["miss u"]
+});
+
+module.exports = { BANAT_SHORTHANDS };
