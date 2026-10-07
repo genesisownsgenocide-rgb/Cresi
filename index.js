@@ -8,7 +8,7 @@ const session = require("express-session");
 const { login } = require("ws3-fca");
 
 /* ============================================================
-   EXISTING HUMAN / BANAT SYSTEM
+   EXISTING SYSTEMS — HUWAG GALAWIN
    ============================================================ */
 
 const {
@@ -27,7 +27,7 @@ const {
 } = require("./banat-targeting");
 
 /* ============================================================
-   NICKNAME / GC NAME PROTECTION
+   PROTECTION MODULES
    ============================================================ */
 
 const {
@@ -41,7 +41,7 @@ const {
 } = require("./gcname-lock");
 
 /* ============================================================
-   EXPRESS
+   EXPRESS SERVER
    ============================================================ */
 
 const app = express();
@@ -58,22 +58,30 @@ app.use(express.urlencoded({
 }));
 
 /* ============================================================
-   DASHBOARD AUTH
+   DASHBOARD LOGIN
    ============================================================ */
 
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "halimaw123";
 
+const SESSION_SECRET =
+  process.env.DASHBOARD_SESSION_SECRET ||
+  "sinzu-command-center-session-secret-change-this";
+
+/*
+ * secure cookie automatically follows HTTPS.
+ * Mas compatible ito sa Render at local testing.
+ */
 app.use(
   session({
-    secret: "sinzu-command-center-session-secret",
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     proxy: true,
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: true,
+      secure: "auto",
       maxAge: 7 * 24 * 60 * 60 * 1000
     }
   })
@@ -128,8 +136,8 @@ function addLog(type, message) {
 
   systemLogs.unshift(entry);
 
-  if (systemLogs.length > 80) {
-    systemLogs.length = 80;
+  if (systemLogs.length > 100) {
+    systemLogs.length = 100;
   }
 
   console.log(
@@ -157,22 +165,16 @@ function sleep(ms) {
   );
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 function uptimeText() {
   if (!botLoginAt) {
     return "0s";
   }
 
-  const seconds = Math.floor(
-    (Date.now() - botLoginAt) / 1000
+  const seconds = Math.max(
+    0,
+    Math.floor(
+      (Date.now() - botLoginAt) / 1000
+    )
   );
 
   const days = Math.floor(
@@ -200,19 +202,8 @@ function uptimeText() {
   return parts.join(" ");
 }
 
-function getProtectionStatus() {
-  return {
-    nickname: {
-      loaded: true
-    },
-    gcname: {
-      loaded: true
-    }
-  };
-}
-
 /* ============================================================
-   APPSTATE / SESSION
+   SESSION / APPSTATE
    ============================================================ */
 
 function normalizeSession(input) {
@@ -260,13 +251,15 @@ function getSavedSession() {
   ];
 
   for (const value of envSessions) {
-    if (value) {
-      const parsed =
-        parseSessionInput(value);
+    if (!value) {
+      continue;
+    }
 
-      if (parsed) {
-        return parsed;
-      }
+    const parsed =
+      parseSessionInput(value);
+
+    if (parsed) {
+      return parsed;
     }
   }
 
@@ -295,7 +288,7 @@ function getSavedSession() {
   } catch (error) {
     addLog(
       "ERROR",
-      `Could not read appstate: ${error.message}`
+      `Could not read saved session: ${error.message}`
     );
 
     return null;
@@ -322,7 +315,7 @@ function saveSession(sessionValue) {
 
     addLog(
       "SECURITY",
-      "Messenger session saved locally."
+      "Messenger session saved."
     );
 
     return true;
@@ -421,7 +414,9 @@ function enqueue(threadID, task) {
 
   if (!threadQueues.has(key)) {
     const queue = [];
+
     queue.running = false;
+
     threadQueues.set(
       key,
       queue
@@ -825,9 +820,9 @@ function onMessage(
       event.body || ""
     ).trim();
 
-  /* --------------------------------------------
-     PROTECTION COMMANDS
-     -------------------------------------------- */
+  /*
+   * Protection commands
+   */
 
   if (body) {
     try {
@@ -840,7 +835,7 @@ function onMessage(
       ) {
         addLog(
           "NICKNAME",
-          `Command executed in ${event.threadID}`
+          `Command handled in ${event.threadID}`
         );
 
         return;
@@ -862,7 +857,7 @@ function onMessage(
       ) {
         addLog(
           "GC NAME",
-          `Command executed in ${event.threadID}`
+          `Command handled in ${event.threadID}`
         );
 
         return;
@@ -875,6 +870,12 @@ function onMessage(
     }
   }
 
+  /*
+   * Ignore non-message events for normal replies.
+   * Protection handlers above still receive
+   * the event.
+   */
+
   if (
     event.type &&
     event.type !== "message"
@@ -886,9 +887,9 @@ function onMessage(
     return;
   }
 
-  /* --------------------------------------------
-     BANAT COMMAND
-     -------------------------------------------- */
+  /*
+   * Banat command
+   */
 
   if (
     isBanatCommand(body)
@@ -916,9 +917,9 @@ function onMessage(
     return;
   }
 
-  /* --------------------------------------------
-     TARGET CLASSIFICATION
-     -------------------------------------------- */
+  /*
+   * Target classification
+   */
 
   let targetInfo = null;
 
@@ -943,9 +944,9 @@ function onMessage(
       threadID
     );
 
-  /* --------------------------------------------
-     TRIGGER REPLY
-     -------------------------------------------- */
+  /*
+   * Existing trigger system
+   */
 
   const triggerReply =
     getTriggerReply(
@@ -968,9 +969,9 @@ function onMessage(
     return;
   }
 
-  /* --------------------------------------------
-     ONLY CONTINUE BANAT WHEN ACTIVE/TARGETED
-     -------------------------------------------- */
+  /*
+   * Only continue banat when active/targeted
+   */
 
   if (
     !modeActive &&
@@ -979,9 +980,9 @@ function onMessage(
     return;
   }
 
-  /* --------------------------------------------
-     HUMAN BANAT CONVERSATION
-     -------------------------------------------- */
+  /*
+   * Existing human banat conversation
+   */
 
   const banatReply =
     getBanatConversationReply(
@@ -1034,28 +1035,46 @@ function start(api) {
     );
   }
 
-  api.listenMqtt(
-    (error, event) => {
-      if (error) {
-        botStatus = "error";
+  if (
+    !api ||
+    typeof api.listenMqtt !==
+      "function"
+  ) {
+    botStatus = "error";
+    botError =
+      "Messenger API does not provide listenMqtt.";
 
-        botError =
-          error?.errorDescription ||
-          error?.message ||
-          String(error);
+    addLog(
+      "ERROR",
+      botError
+    );
 
-        addLog(
-          "MQTT ERROR",
-          botError
-        );
+    return;
+  }
 
-        return;
-      }
+  try {
+    api.listenMqtt(
+      (error, event) => {
 
-      try {
-        /* ----------------------------------------
-           NICKNAME PROTECTION
-           ---------------------------------------- */
+        if (error) {
+          botStatus = "error";
+
+          botError =
+            error?.errorDescription ||
+            error?.message ||
+            String(error);
+
+          addLog(
+            "MQTT ERROR",
+            botError
+          );
+
+          return;
+        }
+
+        /*
+         * Protection events
+         */
 
         if (
           event &&
@@ -1072,16 +1091,7 @@ function start(api) {
               `Nickname protection: ${error.message}`
             );
           });
-        }
 
-        /* ----------------------------------------
-           GC NAME PROTECTION
-           ---------------------------------------- */
-
-        if (
-          event &&
-          event.threadID
-        ) {
           Promise.resolve(
             protectGCName(
               api,
@@ -1095,9 +1105,9 @@ function start(api) {
           });
         }
 
-        /* ----------------------------------------
-           DEFAULT BANAT
-           ---------------------------------------- */
+        /*
+         * Default banat
+         */
 
         if (
           DEFAULT_ON &&
@@ -1124,22 +1134,35 @@ function start(api) {
           }
         }
 
-        onMessage(
-          api,
-          event
-        );
-      } catch (handlerError) {
-        addLog(
-          "ERROR",
-          `Event handler: ${handlerError.message}`
-        );
+        try {
+          onMessage(
+            api,
+            event
+          );
+        } catch (handlerError) {
+          addLog(
+            "ERROR",
+            `Event handler: ${handlerError.message}`
+          );
+        }
       }
-    }
-  );
+    );
+  } catch (error) {
+    botStatus = "error";
+
+    botError =
+      error?.message ||
+      String(error);
+
+    addLog(
+      "ERROR",
+      `listenMqtt failed: ${botError}`
+    );
+  }
 }
 
 /* ============================================================
-   LOGIN BOT
+   BOT LOGIN
    ============================================================ */
 
 async function loginBot(
@@ -1172,12 +1195,29 @@ async function loginBot(
   );
 
   try {
+    /*
+     * Disconnect old session first.
+     */
+
+    if (
+      botApi &&
+      typeof botApi.logout ===
+        "function"
+    ) {
+      try {
+        botApi.logout();
+      } catch (_) {}
+    }
+
+    botApi = null;
+
     const api =
       await new Promise(
         (
           resolve,
           reject
         ) => {
+
           let finished = false;
 
           function done(
@@ -1232,6 +1272,10 @@ async function loginBot(
     botName =
       account.name;
 
+    /*
+     * Save only after successful login.
+     */
+
     saveSession(
       normalized
     );
@@ -1244,7 +1288,7 @@ async function loginBot(
 
     addLog(
       "SUCCESS",
-      `Bot online: ${botName} (${botUserID})`
+      `Bot online: ${botName} (${botUserID || "unknown"})`
     );
 
     return {
@@ -1253,11 +1297,14 @@ async function loginBot(
       uid: botUserID,
       status: botStatus
     };
+
   } catch (error) {
+
     botApi = null;
     botUserID = null;
     botName = "Not logged in";
     botStatus = "offline";
+
     botError =
       error?.errorDescription ||
       error?.message ||
@@ -1269,6 +1316,7 @@ async function loginBot(
     );
 
     throw error;
+
   } finally {
     botConnecting = false;
   }
@@ -1302,6 +1350,7 @@ function requireAuth(
 app.get(
   "/login",
   (req, res) => {
+
     if (
       req.session?.authenticated
     ) {
@@ -1313,7 +1362,7 @@ app.get(
     const error =
       req.query.error
         ? `
-          <div class="login-error">
+          <div class="error">
             Invalid username or password.
           </div>
         `
@@ -1325,13 +1374,9 @@ app.get(
 <head>
 
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0"
->
-
-<title>SINZU AI — Login</title>
+<title>SINZU AI • Login</title>
 
 <style>
 
@@ -1341,12 +1386,11 @@ app.get(
 
 html,
 body {
-  width: 100%;
+  margin: 0;
   min-height: 100%;
 }
 
 body {
-  margin: 0;
   min-height: 100vh;
 
   display: flex;
@@ -1355,20 +1399,27 @@ body {
 
   padding: 20px;
 
-  background:
-    radial-gradient(
-      circle at 50% 0%,
-      #351014 0,
-      #12090b 28%,
-      #050505 65%
-    );
-
   color: #fff;
 
   font-family:
     Inter,
     Arial,
     sans-serif;
+
+  background:
+    radial-gradient(
+      circle at 50% -10%,
+      rgba(255,35,60,.25),
+      transparent 38%
+    ),
+    radial-gradient(
+      circle at 0% 100%,
+      rgba(120,0,20,.18),
+      transparent 35%
+    ),
+    #030303;
+
+  overflow: hidden;
 }
 
 body::before {
@@ -1381,124 +1432,120 @@ body::before {
 
   background:
     linear-gradient(
-      rgba(255,255,255,.015) 1px,
+      rgba(255,255,255,.012) 1px,
       transparent 1px
     ),
     linear-gradient(
       90deg,
-      rgba(255,255,255,.015) 1px,
+      rgba(255,255,255,.012) 1px,
       transparent 1px
     );
 
-  background-size: 35px 35px;
+  background-size:
+    34px 34px;
 }
 
-.login-wrap {
+.login {
   width: 100%;
-  max-width: 430px;
+  max-width: 420px;
 
   position: relative;
   z-index: 2;
 }
 
-.brand {
-  text-align: center;
-  margin-bottom: 25px;
-}
-
 .logo {
-  width: 72px;
-  height: 72px;
+  width: 76px;
+  height: 76px;
 
-  margin: auto;
+  margin: 0 auto 20px;
 
   display: flex;
   align-items: center;
   justify-content: center;
 
-  border-radius: 22px;
+  border-radius: 24px;
 
   background:
     linear-gradient(
       145deg,
-      #ff334c,
-      #6e0714
+      #ff4058,
+      #760817
     );
 
-  box-shadow:
-    0 0 40px
-    rgba(255,30,55,.2);
-
   font-size: 32px;
-  font-weight: 900;
+  font-weight: 950;
+
+  box-shadow:
+    0 0 60px
+    rgba(255,40,65,.25);
 }
 
-.brand h1 {
-  margin:
-    17px 0 5px;
-
-  letter-spacing:
-    2px;
-
-  font-size: 25px;
+.title {
+  text-align: center;
 }
 
-.brand p {
+.title h1 {
   margin: 0;
 
-  color: #777;
+  font-size: 28px;
 
-  font-size: 13px;
+  letter-spacing: 3px;
 }
 
-.login-card {
+.title p {
+  margin: 7px 0 25px;
+
+  color: #666;
+
+  font-size: 10px;
+
+  letter-spacing: 3px;
+}
+
+.card {
+  padding: 26px;
+
   background:
-    rgba(17,17,17,.88);
+    rgba(14,14,15,.82);
 
   backdrop-filter:
-    blur(20px);
+    blur(25px);
 
   border:
     1px solid
-    rgba(255,255,255,.08);
+    rgba(255,255,255,.09);
 
-  border-radius: 20px;
-
-  padding: 25px;
+  border-radius: 22px;
 
   box-shadow:
-    0 30px 100px
-    rgba(0,0,0,.55);
+    0 40px 120px
+    rgba(0,0,0,.6);
+}
+
+label {
+  display: block;
+
+  margin-bottom: 7px;
+
+  color: #777;
+
+  font-size: 10px;
+
+  font-weight: 800;
+
+  letter-spacing: 1.5px;
+
+  text-transform: uppercase;
 }
 
 .field {
   margin-bottom: 15px;
 }
 
-.field label {
-  display: block;
-
-  margin-bottom: 7px;
-
-  color: #888;
-
-  font-size: 12px;
-
-  text-transform:
-    uppercase;
-
-  letter-spacing:
-    1px;
-}
-
-.field input {
+input {
   width: 100%;
 
-  padding: 14px 15px;
-
-  background: #090909;
-
-  color: #fff;
+  padding: 14px;
 
   border:
     1px solid
@@ -1508,23 +1555,25 @@ body::before {
 
   outline: none;
 
-  transition:
-    .2s;
+  background: #080808;
+
+  color: #fff;
+
+  transition: .2s;
 }
 
-.field input:focus {
-  border-color:
-    #e52b42;
+input:focus {
+  border-color: #d5223b;
 
   box-shadow:
     0 0 0 3px
-    rgba(229,43,66,.08);
+    rgba(213,34,59,.08);
 }
 
-.login-button {
+button {
   width: 100%;
 
-  margin-top: 5px;
+  margin-top: 3px;
 
   padding: 14px;
 
@@ -1532,51 +1581,55 @@ body::before {
 
   border-radius: 11px;
 
-  background:
-    linear-gradient(
-      135deg,
-      #ff344c,
-      #a70e21
-    );
-
   color: #fff;
 
-  font-weight: 800;
+  font-weight: 900;
+
+  letter-spacing: .4px;
 
   cursor: pointer;
 
+  background:
+    linear-gradient(
+      135deg,
+      #ff344d,
+      #990c20
+    );
+
   box-shadow:
-    0 10px 30px
-    rgba(190,15,40,.18);
+    0 12px 35px
+    rgba(180,15,40,.2);
 }
 
-.login-error {
+.error {
   margin-bottom: 15px;
 
   padding: 11px;
 
-  border-radius: 9px;
+  color: #ff8a98;
 
   background:
-    rgba(255,50,70,.08);
+    rgba(255,40,60,.08);
 
   border:
     1px solid
-    rgba(255,50,70,.2);
+    rgba(255,40,60,.2);
 
-  color: #ff7c89;
+  border-radius: 10px;
 
-  font-size: 13px;
+  font-size: 12px;
 }
 
-.footer {
-  text-align: center;
+.note {
+  margin-top: 18px;
 
-  margin-top: 20px;
+  text-align: center;
 
   color: #444;
 
-  font-size: 11px;
+  font-size: 9px;
+
+  letter-spacing: .5px;
 }
 
 </style>
@@ -1585,69 +1638,46 @@ body::before {
 
 <body>
 
-<div class="login-wrap">
+<div class="login">
 
-  <div class="brand">
+  <div class="logo">S</div>
 
-    <div class="logo">
-      S
-    </div>
-
-    <h1>
-      SINZU AI
-    </h1>
-
-    <p>
-      COMMAND CENTER
-    </p>
-
+  <div class="title">
+    <h1>SINZU AI</h1>
+    <p>PRIVATE COMMAND CENTER</p>
   </div>
 
-  <div class="login-card">
+  <div class="card">
 
     ${error}
 
-    <form
-      method="POST"
-      action="/login"
-    >
+    <form method="POST" action="/login">
 
       <div class="field">
-
-        <label>
-          Username
-        </label>
+        <label>Username</label>
 
         <input
           type="text"
           name="username"
-          placeholder="Enter username"
           autocomplete="username"
+          placeholder="Username"
           required
         >
-
       </div>
 
       <div class="field">
-
-        <label>
-          Password
-        </label>
+        <label>Password</label>
 
         <input
           type="password"
           name="password"
-          placeholder="Enter password"
           autocomplete="current-password"
+          placeholder="Password"
           required
         >
-
       </div>
 
-      <button
-        class="login-button"
-        type="submit"
-      >
+      <button type="submit">
         ENTER COMMAND CENTER
       </button>
 
@@ -1655,8 +1685,8 @@ body::before {
 
   </div>
 
-  <div class="footer">
-    SINZU AI • PRIVATE CONTROL PANEL
+  <div class="note">
+    SINZU AI • AUTHORIZED ACCESS ONLY
   </div>
 
 </div>
@@ -1674,6 +1704,7 @@ body::before {
 app.post(
   "/login",
   (req, res) => {
+
     const username =
       String(
         req.body.username || ""
@@ -1688,21 +1719,23 @@ app.post(
       username === ADMIN_USER &&
       password === ADMIN_PASS
     ) {
+
       req.session.authenticated =
         true;
 
       return req.session.save(
         error => {
+
           if (error) {
             addLog(
               "ERROR",
-              `Dashboard session: ${error.message}`
+              `Dashboard session error: ${error.message}`
             );
 
             return res
               .status(500)
               .send(
-                "Session error."
+                "Dashboard session error."
               );
           }
 
@@ -1720,13 +1753,14 @@ app.post(
 );
 
 /* ============================================================
-   DASHBOARD
+   PREMIUM DASHBOARD
    ============================================================ */
 
 app.get(
   "/dashboard",
   requireAuth,
   (req, res) => {
+
     res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -1740,20 +1774,27 @@ app.get(
   content="width=device-width, initial-scale=1.0"
 >
 
-<title>SINZU AI — Command Center</title>
+<meta
+  name="theme-color"
+  content="#080808"
+>
+
+<title>SINZU AI • Command Center</title>
 
 <style>
 
 :root {
   --bg: #050505;
-  --panel: rgba(16,16,17,.82);
-  --panel2: #0d0d0e;
-  --border: rgba(255,255,255,.08);
-  --text: #f4f4f4;
-  --muted: #777;
+  --panel: rgba(15,15,16,.76);
+  --panel2: #0a0a0b;
+  --border: rgba(255,255,255,.075);
+  --border2: rgba(255,255,255,.12);
+  --text: #f5f5f5;
+  --muted: #686868;
+  --muted2: #444;
   --red: #ff334d;
-  --red2: #a50d21;
-  --green: #45e28a;
+  --red2: #9d0b20;
+  --green: #49e69a;
   --yellow: #ffd166;
 }
 
@@ -1770,25 +1811,25 @@ body {
 
   min-height: 100vh;
 
-  background:
-    radial-gradient(
-      circle at 75% -10%,
-      rgba(164,12,32,.23),
-      transparent 35%
-    ),
-    radial-gradient(
-      circle at 5% 30%,
-      rgba(90,10,20,.14),
-      transparent 30%
-    ),
-    var(--bg);
-
   color: var(--text);
 
   font-family:
     Inter,
     Arial,
     sans-serif;
+
+  background:
+    radial-gradient(
+      circle at 80% -10%,
+      rgba(190,15,40,.23),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at -10% 55%,
+      rgba(110,5,20,.12),
+      transparent 30%
+    ),
+    var(--bg);
 }
 
 body::before {
@@ -1798,8 +1839,6 @@ body::before {
   inset: 0;
 
   pointer-events: none;
-
-  opacity: .45;
 
   background:
     linear-gradient(
@@ -1812,32 +1851,45 @@ body::before {
       transparent 1px
     );
 
-  background-size: 35px 35px;
+  background-size: 36px 36px;
+
+  opacity: .8;
 }
 
-/* =========================================================
-   APP
-   ========================================================= */
+body::after {
+  content: "";
+
+  position: fixed;
+  inset: 0;
+
+  pointer-events: none;
+
+  background:
+    linear-gradient(
+      transparent 0%,
+      rgba(255,255,255,.012) 50%,
+      transparent 100%
+    );
+
+  background-size:
+    100% 7px;
+
+  opacity: .18;
+}
 
 .app {
   position: relative;
-  z-index: 1;
+  z-index: 2;
 
-  width: min(
-    1250px,
-    94%
-  );
+  width: min(1320px, 94%);
 
-  margin:
-    0 auto;
+  margin: auto;
 
   padding:
-    25px 0 50px;
+    20px 0 45px;
 }
 
-/* =========================================================
-   TOPBAR
-   ========================================================= */
+/* TOPBAR */
 
 .topbar {
   display: flex;
@@ -1846,44 +1898,41 @@ body::before {
 
   justify-content: space-between;
 
-  gap: 20px;
-
-  margin-bottom: 25px;
+  gap: 15px;
 
   padding:
-    16px 18px;
+    13px 15px;
+
+  margin-bottom: 16px;
 
   background:
-    rgba(14,14,15,.78);
+    rgba(12,12,13,.72);
 
   backdrop-filter:
-    blur(20px);
+    blur(22px);
 
   border:
     1px solid
     var(--border);
 
-  border-radius:
-    17px;
+  border-radius: 17px;
 
   box-shadow:
     0 20px 70px
-    rgba(0,0,0,.28);
+    rgba(0,0,0,.3);
 }
 
-.brand-area {
+.brand {
   display: flex;
 
   align-items: center;
 
-  gap: 13px;
+  gap: 11px;
 }
 
 .brand-icon {
-  width: 45px;
-  height: 45px;
-
-  flex: 0 0 45px;
+  width: 43px;
+  height: 43px;
 
   display: flex;
 
@@ -1895,44 +1944,44 @@ body::before {
   background:
     linear-gradient(
       145deg,
-      #ff344d,
-      #740817
+      #ff4058,
+      #730817
     );
 
-  font-weight: 900;
+  font-weight: 950;
 
   box-shadow:
-    0 0 25px
-    rgba(255,35,60,.15);
+    0 0 30px
+    rgba(255,40,65,.16);
 }
 
-.brand-title {
-  font-size: 16px;
+.brand-name {
+  font-size: 14px;
 
   font-weight: 900;
 
-  letter-spacing: 1.4px;
+  letter-spacing: 1.5px;
 }
 
-.brand-subtitle {
+.brand-sub {
   margin-top: 3px;
 
-  color: #666;
+  color: #555;
 
-  font-size: 11px;
+  font-size: 9px;
 
-  letter-spacing: .7px;
+  letter-spacing: 1.2px;
 }
 
-.top-actions {
+.top-right {
   display: flex;
 
   align-items: center;
 
-  gap: 9px;
+  gap: 8px;
 }
 
-.status-pill {
+.status {
   display: flex;
 
   align-items: center;
@@ -1951,34 +2000,35 @@ body::before {
   background:
     rgba(255,255,255,.025);
 
-  color: #aaa;
+  color: #888;
 
-  font-size: 11px;
+  font-size: 9px;
 
-  font-weight: 700;
+  font-weight: 900;
+
+  letter-spacing: .8px;
 }
 
-.dot {
+.status-dot {
   width: 7px;
   height: 7px;
 
   border-radius: 50%;
 
-  background: #666;
+  background: #555;
 }
 
-.dot.online {
-  background:
-    var(--green);
+.status-dot.online {
+  background: var(--green);
 
   box-shadow:
-    0 0 12px
-    rgba(69,226,138,.75);
+    0 0 13px
+    rgba(73,230,154,.8);
 }
 
 .logout {
   padding:
-    9px 12px;
+    8px 11px;
 
   border:
     1px solid
@@ -1986,69 +2036,90 @@ body::before {
 
   border-radius: 9px;
 
-  color: #999;
+  color: #777;
 
   text-decoration: none;
 
-  font-size: 11px;
+  font-size: 9px;
+
+  font-weight: 800;
 }
 
 .logout:hover {
   color: #fff;
 
   border-color:
-    rgba(255,255,255,.18);
+    var(--border2);
 }
 
-/* =========================================================
-   HERO
-   ========================================================= */
+/* HERO */
 
 .hero {
   position: relative;
 
   overflow: hidden;
 
-  margin-bottom: 16px;
+  padding:
+    29px 30px;
 
-  padding: 30px;
+  margin-bottom: 14px;
 
   border:
     1px solid
     rgba(255,255,255,.08);
 
-  border-radius: 22px;
+  border-radius: 21px;
 
   background:
     linear-gradient(
-      120deg,
-      rgba(28,11,14,.96),
-      rgba(12,12,13,.92)
+      125deg,
+      rgba(37,10,14,.95),
+      rgba(12,12,13,.91)
     );
 
   box-shadow:
-    0 30px 90px
-    rgba(0,0,0,.38);
+    0 30px 100px
+    rgba(0,0,0,.35);
 }
 
-.hero::after {
+.hero::before {
   content: "";
 
   position: absolute;
 
-  width: 280px;
-  height: 280px;
+  width: 360px;
+  height: 360px;
 
-  right: -100px;
-  top: -140px;
+  right: -140px;
+  top: -180px;
 
   border-radius: 50%;
 
   background:
-    rgba(255,35,60,.08);
+    rgba(255,30,55,.08);
 
-  filter:
-    blur(20px);
+  filter: blur(25px);
+}
+
+.hero::after {
+  content: "SINZU";
+
+  position: absolute;
+
+  right: 30px;
+  bottom: -20px;
+
+  color:
+    rgba(255,255,255,.025);
+
+  font-size:
+    90px;
+
+  font-weight:
+    950;
+
+  letter-spacing:
+    -5px;
 }
 
 .hero-content {
@@ -2057,50 +2128,42 @@ body::before {
 }
 
 .eyebrow {
-  color:
-    #e74b5c;
+  color: #d64253;
 
-  font-size: 10px;
+  font-size: 9px;
 
   font-weight: 900;
 
-  letter-spacing:
-    2.5px;
+  letter-spacing: 2.5px;
 
-  text-transform:
-    uppercase;
+  text-transform: uppercase;
 }
 
 .hero h1 {
   margin:
-    9px 0 6px;
+    8px 0 7px;
 
   font-size:
-    clamp(27px, 5vw, 43px);
+    clamp(28px, 5vw, 48px);
 
-  line-height:
-    1.05;
+  line-height: 1;
 
-  letter-spacing:
-    -1.5px;
+  letter-spacing: -2px;
 }
 
 .hero p {
+  max-width: 690px;
+
   margin: 0;
 
-  max-width: 650px;
+  color: #696969;
 
-  color: #777;
+  font-size: 12px;
 
-  line-height:
-    1.6;
-
-  font-size: 13px;
+  line-height: 1.7;
 }
 
-/* =========================================================
-   STAT GRID
-   ========================================================= */
+/* STATS */
 
 .stats {
   display: grid;
@@ -2108,9 +2171,9 @@ body::before {
   grid-template-columns:
     repeat(4, 1fr);
 
-  gap: 13px;
+  gap: 11px;
 
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .card {
@@ -2118,146 +2181,128 @@ body::before {
     var(--panel);
 
   backdrop-filter:
-    blur(18px);
+    blur(20px);
 
   border:
     1px solid
     var(--border);
 
-  border-radius:
-    17px;
+  border-radius: 16px;
 
   box-shadow:
-    0 15px 50px
-    rgba(0,0,0,.18);
+    0 18px 60px
+    rgba(0,0,0,.2);
 }
 
-.stat-card {
-  padding: 19px;
+.stat {
+  min-width: 0;
 
-  min-height:
-    126px;
+  padding: 17px;
 
   transition:
     transform .2s,
     border-color .2s;
 }
 
-.stat-card:hover {
+.stat:hover {
   transform:
     translateY(-2px);
 
   border-color:
-    rgba(255,255,255,.13);
+    var(--border2);
 }
 
-.stat-top {
+.stat-head {
   display: flex;
-
-  align-items: center;
 
   justify-content:
     space-between;
+
+  align-items:
+    center;
 }
 
 .stat-label {
-  color:
-    #666;
+  color: #555;
 
-  font-size:
-    10px;
+  font-size: 8px;
 
-  font-weight:
-    800;
+  font-weight: 900;
 
-  letter-spacing:
-    1.4px;
+  letter-spacing: 1.5px;
 }
 
 .stat-icon {
-  width: 31px;
-  height: 31px;
+  width: 29px;
+  height: 29px;
 
   display: flex;
 
   align-items: center;
   justify-content: center;
 
-  border-radius:
-    9px;
+  border-radius: 9px;
 
   background:
-    rgba(255,255,255,.04);
+    rgba(255,255,255,.035);
 
-  color:
-    #aaa;
+  color: #777;
 
-  font-size:
-    13px;
+  font-size: 12px;
 }
 
 .stat-value {
-  margin-top:
-    20px;
+  margin-top: 17px;
 
-  font-size:
-    19px;
+  overflow: hidden;
 
-  font-weight:
-    850;
+  text-overflow: ellipsis;
 
-  white-space:
-    nowrap;
+  white-space: nowrap;
 
-  overflow:
-    hidden;
+  font-size: 18px;
 
-  text-overflow:
-    ellipsis;
+  font-weight: 900;
 }
 
 .stat-meta {
-  margin-top:
-    5px;
+  margin-top: 5px;
 
-  color:
-    #555;
+  color: #444;
 
-  font-size:
-    10px;
+  font-size: 9px;
 }
 
-.online-text {
-  color:
-    var(--green);
+.online {
+  color: var(--green);
 }
 
-.offline-text {
-  color:
-    #ff6575;
+.offline {
+  color: #ff6878;
 }
 
-.connecting-text {
-  color:
-    var(--yellow);
+.connecting {
+  color: var(--yellow);
 }
 
-/* =========================================================
-   MAIN GRID
-   ========================================================= */
+/* GRID */
 
-.main-grid {
+.grid {
   display: grid;
 
   grid-template-columns:
-    1.5fr 1fr;
+    minmax(0, 1.45fr)
+    minmax(320px, .85fr);
 
-  gap: 16px;
+  gap: 14px;
 }
 
 .section {
-  padding:
-    20px;
+  padding: 19px;
+}
+
+.section + .section {
+  margin-top: 14px;
 }
 
 .section-head {
@@ -2267,147 +2312,116 @@ body::before {
 
   justify-content: space-between;
 
-  gap: 10px;
+  gap: 12px;
 
-  margin-bottom:
-    17px;
+  margin-bottom: 15px;
 }
 
 .section-title {
-  font-size:
-    15px;
+  font-size: 13px;
 
-  font-weight:
-    850;
+  font-weight: 900;
 }
 
 .section-desc {
-  margin-top:
-    3px;
+  margin-top: 4px;
 
-  color:
-    #5f5f5f;
+  color: #505050;
 
-  font-size:
-    11px;
+  font-size: 9px;
 }
 
-/* =========================================================
-   SESSION LOGIN
-   ========================================================= */
+/* SESSION */
 
 textarea {
   width: 100%;
 
-  min-height:
-    205px;
+  min-height: 185px;
 
-  resize:
-    vertical;
+  padding: 14px;
 
-  padding:
-    14px;
+  resize: vertical;
 
-  background:
-    #080808;
+  outline: none;
 
-  color:
-    #ddd;
+  color: #ccc;
+
+  background: #070707;
 
   border:
     1px solid
-    #252525;
+    #222;
 
-  border-radius:
-    12px;
-
-  outline:
-    none;
+  border-radius: 12px;
 
   font-family:
     "Courier New",
     monospace;
 
-  font-size:
-    11px;
+  font-size: 10px;
 
-  line-height:
-    1.5;
+  line-height: 1.5;
 
-  transition:
-    .2s;
+  transition: .2s;
 }
 
 textarea:focus {
   border-color:
-    rgba(255,50,70,.5);
+    rgba(255,50,70,.42);
 
   box-shadow:
     0 0 0 3px
-    rgba(255,50,70,.06);
+    rgba(255,50,70,.055);
 }
 
-.security-note {
-  display: flex;
-
-  gap: 10px;
-
-  margin-top:
-    12px;
-
-  padding:
-    11px 12px;
-
-  border-radius:
-    10px;
-
-  background:
-    rgba(255,190,70,.035);
-
-  border:
-    1px solid
-    rgba(255,190,70,.09);
-
-  color:
-    #8e7951;
-
-  font-size:
-    10px;
-
-  line-height:
-    1.5;
-}
-
-.buttons {
+.security {
   display: flex;
 
   gap: 9px;
 
-  flex-wrap:
-    wrap;
+  margin-top: 10px;
 
-  margin-top:
-    13px;
+  padding: 10px;
+
+  color: #81704d;
+
+  background:
+    rgba(255,190,70,.03);
+
+  border:
+    1px solid
+    rgba(255,190,70,.075);
+
+  border-radius: 10px;
+
+  font-size: 9px;
+
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+
+  flex-wrap: wrap;
+
+  gap: 8px;
+
+  margin-top: 11px;
 }
 
 button {
-  border:
-    0;
+  border: 0;
 
-  cursor:
-    pointer;
-
-  border-radius:
-    10px;
+  border-radius: 9px;
 
   padding:
-    11px 15px;
+    10px 14px;
 
-  font-size:
-    11px;
+  cursor: pointer;
 
-  font-weight:
-    850;
+  font-size: 9px;
+
+  font-weight: 900;
 
   transition:
     transform .15s,
@@ -2416,31 +2430,28 @@ button {
 
 button:active {
   transform:
-    scale(.98);
+    scale(.97);
 }
 
 .primary {
-  color:
-    #fff;
+  color: #fff;
 
   background:
     linear-gradient(
       135deg,
       #ff344d,
-      #a70d21
+      #970d20
     );
 
   box-shadow:
-    0 10px 25px
-    rgba(180,15,35,.17);
+    0 9px 25px
+    rgba(170,15,35,.16);
 }
 
 .secondary {
-  color:
-    #bbb;
+  color: #aaa;
 
-  background:
-    #181819;
+  background: #151516;
 
   border:
     1px solid
@@ -2448,276 +2459,242 @@ button:active {
 }
 
 .danger {
-  color:
-    #ff7a88;
+  color: #ff7d8b;
 
   background:
-    rgba(130,10,25,.15);
+    rgba(120,8,25,.12);
 
   border:
     1px solid
-    rgba(255,50,70,.12);
+    rgba(255,45,65,.12);
 }
 
-/* =========================================================
-   MODULES
-   ========================================================= */
+#actionMessage {
+  min-height: 14px;
+}
+
+/* MODULES */
 
 .modules {
-  display:
-    grid;
+  display: grid;
 
   grid-template-columns:
     repeat(2, 1fr);
 
-  gap:
-    10px;
+  gap: 8px;
 }
 
 .module {
-  padding:
-    15px;
+  padding: 13px;
 
   background:
-    #0c0c0d;
+    #0a0a0b;
 
   border:
     1px solid
-    #202021;
+    #1d1d1e;
 
-  border-radius:
-    12px;
+  border-radius: 11px;
 }
 
 .module-head {
-  display:
-    flex;
-
-  align-items:
-    center;
+  display: flex;
 
   justify-content:
     space-between;
+
+  align-items: center;
+
+  gap: 8px;
 }
 
 .module-name {
-  font-size:
-    11px;
+  font-size: 10px;
 
-  font-weight:
-    800;
+  font-weight: 850;
 }
 
-.module-status {
+.badge {
+  flex: 0 0 auto;
+
   padding:
-    4px 7px;
+    4px 6px;
 
   border-radius:
     999px;
 
-  background:
-    rgba(69,226,138,.06);
-
   color:
     var(--green);
 
+  background:
+    rgba(73,230,154,.055);
+
   font-size:
-    8px;
+    7px;
 
   font-weight:
-    900;
+    950;
+
+  letter-spacing:
+    .6px;
 }
 
-.module-desc {
-  margin-top:
-    8px;
+.module p {
+  margin:
+    7px 0 0;
 
-  color:
-    #5c5c5c;
+  color: #4e4e4e;
 
-  font-size:
-    9px;
+  font-size: 8px;
 
-  line-height:
-    1.5;
+  line-height: 1.5;
 }
 
-/* =========================================================
-   LOGS
-   ========================================================= */
+/* COMMANDS */
 
-.logs {
-  height:
-    290px;
+.commands {
+  display: grid;
 
-  overflow:
-    auto;
+  gap: 7px;
+}
+
+.command {
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: 10px;
+
+  padding:
+    10px 11px;
 
   background:
-    #080808;
+    #0a0a0b;
 
   border:
     1px solid
-    #202020;
+    #1c1c1d;
 
-  border-radius:
-    12px;
-
-  padding:
-    8px;
+  border-radius: 9px;
 }
 
-.log {
-  display:
-    grid;
-
-  grid-template-columns:
-    68px 76px 1fr;
-
-  gap:
-    7px;
-
-  padding:
-    9px;
-
-  border-bottom:
-    1px solid
-    rgba(255,255,255,.035);
+.command code {
+  color: #bbb;
 
   font-family:
     "Courier New",
     monospace;
 
-  font-size:
-    9px;
-}
-
-.log:last-child {
-  border-bottom:
-    0;
-}
-
-.log-time {
-  color:
-    #444;
-}
-
-.log-type {
-  color:
-    #b34b59;
-
-  font-weight:
-    800;
-}
-
-.log-message {
-  color:
-    #8a8a8a;
-
-  word-break:
-    break-word;
-}
-
-/* =========================================================
-   QUICK COMMANDS
-   ========================================================= */
-
-.command-list {
-  display:
-    grid;
-
-  gap:
-    8px;
-}
-
-.command {
-  display:
-    flex;
-
-  align-items:
-    center;
-
-  justify-content:
-    space-between;
-
-  padding:
-    11px 12px;
-
-  background:
-    #0c0c0d;
-
-  border:
-    1px solid
-    #202020;
-
-  border-radius:
-    10px;
-}
-
-.command code {
-  color:
-    #d2d2d2;
-
-  font-size:
-    10px;
+  font-size: 9px;
 }
 
 .command span {
-  color:
-    #555;
+  color: #444;
 
-  font-size:
-    9px;
+  font-size: 7px;
+
+  font-weight: 900;
 }
 
-/* =========================================================
-   FOOTER
-   ========================================================= */
+/* LOGS */
+
+.logs {
+  height: 285px;
+
+  overflow-y: auto;
+
+  padding: 5px;
+
+  background:
+    #070707;
+
+  border:
+    1px solid
+    #1d1d1d;
+
+  border-radius: 11px;
+}
+
+.log {
+  display: grid;
+
+  grid-template-columns:
+    63px 70px 1fr;
+
+  gap: 7px;
+
+  padding:
+    8px;
+
+  border-bottom:
+    1px solid
+    rgba(255,255,255,.025);
+
+  font-family:
+    "Courier New",
+    monospace;
+
+  font-size: 8px;
+}
+
+.log:last-child {
+  border-bottom: 0;
+}
+
+.log-time {
+  color: #3e3e3e;
+}
+
+.log-type {
+  color: #b34354;
+
+  font-weight: 900;
+}
+
+.log-message {
+  color: #777;
+
+  word-break: break-word;
+}
+
+/* FOOTER */
 
 .footer {
-  margin-top:
-    20px;
+  margin-top: 17px;
 
-  text-align:
-    center;
+  text-align: center;
 
-  color:
-    #3d3d3d;
+  color: #333;
 
-  font-size:
-    10px;
+  font-size: 8px;
 
-  letter-spacing:
-    .5px;
+  letter-spacing: 1px;
 }
 
-/* =========================================================
-   RESPONSIVE
-   ========================================================= */
+/* RESPONSIVE */
 
-@media (
-  max-width: 900px
-) {
+@media (max-width: 950px) {
 
   .stats {
     grid-template-columns:
       repeat(2, 1fr);
   }
 
-  .main-grid {
+  .grid {
     grid-template-columns:
       1fr;
   }
 
 }
 
-@media (
-  max-width: 600px
-) {
+@media (max-width: 600px) {
 
   .app {
-    width:
-      94%;
+    width: 94%;
+
+    padding-top: 10px;
   }
 
   .topbar {
@@ -2728,43 +2705,47 @@ button:active {
       column;
   }
 
-  .top-actions {
-    width:
-      100%;
+  .top-right {
+    width: 100%;
 
     justify-content:
       space-between;
   }
 
   .hero {
-    padding:
-      23px;
+    padding: 23px;
+  }
+
+  .hero h1 {
+    font-size: 32px;
+  }
+
+  .hero::after {
+    font-size: 55px;
+
+    right: 10px;
   }
 
   .stats {
-    grid-template-columns:
-      1fr 1fr;
-
-    gap:
-      9px;
+    gap: 8px;
   }
 
-  .stat-card {
-    min-height:
-      112px;
-
-    padding:
-      14px;
+  .stat {
+    padding: 13px;
   }
 
   .stat-value {
-    font-size:
-      15px;
+    margin-top: 14px;
+
+    font-size: 14px;
+  }
+
+  .stat-meta {
+    font-size: 8px;
   }
 
   .section {
-    padding:
-      15px;
+    padding: 14px;
   }
 
   .modules {
@@ -2774,10 +2755,13 @@ button:active {
 
   .log {
     grid-template-columns:
-      55px 62px 1fr;
+      52px 58px 1fr;
 
-    font-size:
-      8px;
+    font-size: 7px;
+  }
+
+  textarea {
+    min-height: 160px;
   }
 
 }
@@ -2794,7 +2778,7 @@ button:active {
 
   <header class="topbar">
 
-    <div class="brand-area">
+    <div class="brand">
 
       <div class="brand-icon">
         S
@@ -2802,24 +2786,24 @@ button:active {
 
       <div>
 
-        <div class="brand-title">
+        <div class="brand-name">
           SINZU AI
         </div>
 
-        <div class="brand-subtitle">
-          COMMAND CENTER
+        <div class="brand-sub">
+          PRIVATE COMMAND CENTER
         </div>
 
       </div>
 
     </div>
 
-    <div class="top-actions">
+    <div class="top-right">
 
-      <div class="status-pill">
+      <div class="status">
 
         <span
-          class="dot"
+          class="status-dot"
           id="topDot"
         ></span>
 
@@ -2830,8 +2814,8 @@ button:active {
       </div>
 
       <a
-        href="/logout"
         class="logout"
+        href="/logout"
       >
         LOGOUT
       </a>
@@ -2847,7 +2831,7 @@ button:active {
     <div class="hero-content">
 
       <div class="eyebrow">
-        Messenger Control System
+        MESSENGER CONTROL SYSTEM
       </div>
 
       <h1>
@@ -2855,22 +2839,23 @@ button:active {
       </h1>
 
       <p>
-        Monitor the bot, manage the Messenger
-        session, and keep your protection
-        modules connected from one dashboard.
+        Monitor your Messenger connection,
+        manage the session, and keep the
+        protection systems connected from
+        one control panel.
       </p>
 
     </div>
 
   </section>
 
-  <!-- STATS -->
+  <!-- STAT CARDS -->
 
   <section class="stats">
 
-    <div class="card stat-card">
+    <div class="card stat">
 
-      <div class="stat-top">
+      <div class="stat-head">
 
         <div class="stat-label">
           BOT ACCOUNT
@@ -2895,9 +2880,9 @@ button:active {
 
     </div>
 
-    <div class="card stat-card">
+    <div class="card stat">
 
-      <div class="stat-top">
+      <div class="stat-head">
 
         <div class="stat-label">
           BOT UID
@@ -2922,9 +2907,9 @@ button:active {
 
     </div>
 
-    <div class="card stat-card">
+    <div class="card stat">
 
-      <div class="stat-top">
+      <div class="stat-head">
 
         <div class="stat-label">
           CONNECTION
@@ -2944,14 +2929,14 @@ button:active {
       </div>
 
       <div class="stat-meta">
-        Live bot state
+        Live connection state
       </div>
 
     </div>
 
-    <div class="card stat-card">
+    <div class="card stat">
 
-      <div class="stat-top">
+      <div class="stat-head">
 
         <div class="stat-label">
           UPTIME
@@ -2971,7 +2956,7 @@ button:active {
       </div>
 
       <div class="stat-meta">
-        Current process session
+        Current bot session
       </div>
 
     </div>
@@ -2980,13 +2965,11 @@ button:active {
 
   <!-- MAIN -->
 
-  <div class="main-grid">
+  <div class="grid">
 
-    <!-- LEFT -->
+    <main>
 
-    <div>
-
-      <!-- LOGIN -->
+      <!-- SESSION -->
 
       <section class="card section">
 
@@ -2999,7 +2982,7 @@ button:active {
             </div>
 
             <div class="section-desc">
-              Connect the bot using AppState / C3C.
+              Connect using your AppState / C3C session.
             </div>
 
           </div>
@@ -3010,23 +2993,22 @@ button:active {
           id="appstate"
           placeholder="Paste AppState / C3C here..."
           spellcheck="false"
+          autocomplete="off"
         ></textarea>
 
-        <div class="security-note">
+        <div class="security">
+
+          <span>🔐</span>
 
           <span>
-            🔐
-          </span>
-
-          <span>
-            Keep your AppState/C3C private.
-            Do not publish it on GitHub or send
-            it to other people.
+            Keep your session private.
+            Never publish AppState/C3C in GitHub,
+            screenshots, logs, or public chats.
           </span>
 
         </div>
 
-        <div class="buttons">
+        <div class="actions">
 
           <button
             class="primary"
@@ -3037,7 +3019,7 @@ button:active {
 
           <button
             class="secondary"
-            onclick="clearSessionInput()"
+            onclick="clearInput()"
           >
             CLEAR
           </button>
@@ -3052,33 +3034,29 @@ button:active {
         </div>
 
         <div
-          class="section-desc"
           id="actionMessage"
+          class="section-desc"
           style="margin-top:12px;"
         >
-          Ready.
-
+          System ready.
         </div>
 
       </section>
 
-      <!-- ACTIVITY -->
+      <!-- LOGS -->
 
-      <section
-        class="card section"
-        style="margin-top:16px;"
-      >
+      <section class="card section">
 
         <div class="section-head">
 
           <div>
 
             <div class="section-title">
-              System Activity
+              Live Activity
             </div>
 
             <div class="section-desc">
-              Recent bot and dashboard events.
+              Recent system events.
             </div>
 
           </div>
@@ -3101,11 +3079,9 @@ button:active {
 
       </section>
 
-    </div>
+    </main>
 
-    <!-- RIGHT -->
-
-    <div>
+    <aside>
 
       <!-- MODULES -->
 
@@ -3120,7 +3096,7 @@ button:active {
             </div>
 
             <div class="section-desc">
-              Loaded modules connected to index.js.
+              Connected to the bot event handler.
             </div>
 
           </div>
@@ -3137,16 +3113,15 @@ button:active {
                 Nickname Protection
               </div>
 
-              <div class="module-status">
-                LOADED
+              <div class="badge">
+                ACTIVE
               </div>
 
             </div>
 
-            <div class="module-desc">
-              Restores protected nicknames when
-              supported Messenger events are received.
-            </div>
+            <p>
+              Connected to setallnick.js.
+            </p>
 
           </div>
 
@@ -3158,16 +3133,15 @@ button:active {
                 GC Name Lock
               </div>
 
-              <div class="module-status">
-                LOADED
+              <div class="badge">
+                ACTIVE
               </div>
 
             </div>
 
-            <div class="module-desc">
-              Keeps the configured group name
-              protected when supported events occur.
-            </div>
+            <p>
+              Connected to gcname-lock.js.
+            </p>
 
           </div>
 
@@ -3179,16 +3153,15 @@ button:active {
                 Human Banat
               </div>
 
-              <div class="module-status">
+              <div class="badge">
                 LOADED
               </div>
 
             </div>
 
-            <div class="module-desc">
-              Existing human-style reply system
-              remains connected.
-            </div>
+            <p>
+              Existing human reply system.
+            </p>
 
           </div>
 
@@ -3200,16 +3173,15 @@ button:active {
                 Trigger System
               </div>
 
-              <div class="module-status">
+              <div class="badge">
                 LOADED
               </div>
 
             </div>
 
-            <div class="module-desc">
-              Existing trigger reply system remains
-              connected to the message handler.
-            </div>
+            <p>
+              Existing trigger reply system.
+            </p>
 
           </div>
 
@@ -3217,11 +3189,10 @@ button:active {
 
       </section>
 
-      <!-- QUICK COMMANDS -->
+      <!-- COMMANDS -->
 
       <section
         class="card section"
-        style="margin-top:16px;"
       >
 
         <div class="section-head">
@@ -3233,132 +3204,88 @@ button:active {
             </div>
 
             <div class="section-desc">
-              Commands available inside Messenger.
+              Messenger-side controls.
             </div>
 
           </div>
 
         </div>
 
-        <div class="command-list">
+        <div class="commands">
 
           <div class="command">
-
-            <code>
-              !setallnick &lt;nickname&gt;
-            </code>
-
-            <span>
-              ADMIN
-            </span>
-
+            <code>!setallnick &lt;nickname&gt;</code>
+            <span>ADMIN</span>
           </div>
 
           <div class="command">
-
-            <code>
-              !restoreallnick
-            </code>
-
-            <span>
-              ADMIN
-            </span>
-
+            <code>!restoreallnick</code>
+            <span>ADMIN</span>
           </div>
 
           <div class="command">
-
-            <code>
-              !nickprotect
-            </code>
-
-            <span>
-              STATUS
-            </span>
-
+            <code>!nickprotect</code>
+            <span>STATUS</span>
           </div>
 
           <div class="command">
-
-            <code>
-              !lockgcname &lt;name&gt;
-            </code>
-
-            <span>
-              ADMIN
-            </span>
-
+            <code>!lockgcname &lt;name&gt;</code>
+            <span>ADMIN</span>
           </div>
 
           <div class="command">
-
-            <code>
-              !unlockgcname
-            </code>
-
-            <span>
-              ADMIN
-            </span>
-
+            <code>!unlockgcname</code>
+            <span>ADMIN</span>
           </div>
 
           <div class="command">
-
-            <code>
-              !gcnameprotect
-            </code>
-
-            <span>
-              STATUS
-            </span>
-
+            <code>!gcnameprotect</code>
+            <span>STATUS</span>
           </div>
 
           <div class="command">
-
-            <code>
-              /banat on
-            </code>
-
-            <span>
-              ADMIN
-            </span>
-
+            <code>/banat on</code>
+            <span>ADMIN</span>
           </div>
 
           <div class="command">
-
-            <code>
-              /banat off
-            </code>
-
-            <span>
-              ADMIN
-            </span>
-
+            <code>/banat off</code>
+            <span>ADMIN</span>
           </div>
 
         </div>
 
       </section>
 
-    </div>
+    </aside>
 
   </div>
 
   <div class="footer">
-    SINZU AI • COMMAND CENTER • LIVE DASHBOARD
+    SINZU AI • COMMAND CENTER • LIVE SYSTEM
   </div>
 
 </div>
 
 <script>
 
-function setActionMessage(text) {
-  document.getElementById(
-    "actionMessage"
-  ).textContent = text;
+function setActionMessage(message) {
+
+  const element =
+    document.getElementById(
+      "actionMessage"
+    );
+
+  if (element) {
+    element.textContent =
+      message;
+  }
+
 }
+
+/* ==========================================================
+   STATUS
+   ========================================================== */
 
 async function refreshStatus() {
 
@@ -3420,8 +3347,10 @@ async function refreshStatus() {
       "—";
 
     status.textContent =
-      data.status ||
-      "offline";
+      String(
+        data.status ||
+        "offline"
+      ).toUpperCase();
 
     uptime.textContent =
       data.uptime ||
@@ -3430,11 +3359,16 @@ async function refreshStatus() {
     status.className =
       "stat-value";
 
+    topDot.classList.remove(
+      "online"
+    );
+
     if (
       data.status === "online"
     ) {
+
       status.classList.add(
-        "online-text"
+        "online"
       );
 
       topStatus.textContent =
@@ -3449,51 +3383,52 @@ async function refreshStatus() {
     ) {
 
       status.classList.add(
-        "connecting-text"
+        "connecting"
       );
 
       topStatus.textContent =
         "CONNECTING";
 
-      topDot.classList.remove(
-        "online"
-      );
-
     } else {
 
       status.classList.add(
-        "offline-text"
+        "offline"
       );
 
       topStatus.textContent =
         "OFFLINE";
 
-      topDot.classList.remove(
-        "online"
-      );
-
     }
 
   } catch (error) {
 
-    document.getElementById(
-      "topStatus"
-    ).textContent =
-      "ERROR";
+    const topStatus =
+      document.getElementById(
+        "topStatus"
+      );
+
+    if (topStatus) {
+      topStatus.textContent =
+        "ERROR";
+    }
 
   }
 
 }
 
+/* ==========================================================
+   LOGIN
+   ========================================================== */
+
 async function loginBot() {
 
-  const textarea =
+  const input =
     document.getElementById(
       "appstate"
     );
 
   const value =
-    textarea.value.trim();
+    input.value.trim();
 
   if (!value) {
 
@@ -3528,17 +3463,23 @@ async function loginBot() {
         }
       );
 
-    const data =
-      await response.json();
+    let data = {};
+
+    try {
+      data =
+        await response.json();
+    } catch (_) {}
 
     if (!response.ok) {
+
       throw new Error(
         data.error ||
         "Login failed."
       );
+
     }
 
-    textarea.value = "";
+    input.value = "";
 
     setActionMessage(
       "Connected successfully as " +
@@ -3565,17 +3506,28 @@ async function loginBot() {
 
 }
 
-function clearSessionInput() {
+/* ==========================================================
+   CLEAR
+   ========================================================== */
 
-  document.getElementById(
-    "appstate"
-  ).value = "";
+function clearInput() {
+
+  const input =
+    document.getElementById(
+      "appstate"
+    );
+
+  input.value = "";
 
   setActionMessage(
-    "Input cleared."
+    "Session input cleared."
   );
 
 }
+
+/* ==========================================================
+   DISCONNECT
+   ========================================================== */
 
 async function logoutBot() {
 
@@ -3614,6 +3566,10 @@ async function logoutBot() {
 
 }
 
+/* ==========================================================
+   LOGS
+   ========================================================== */
+
 async function refreshLogs() {
 
   const container =
@@ -3631,6 +3587,12 @@ async function refreshLogs() {
         }
       );
 
+    if (!response.ok) {
+      throw new Error(
+        "Logs request failed."
+      );
+    }
+
     const data =
       await response.json();
 
@@ -3640,7 +3602,7 @@ async function refreshLogs() {
     ) {
 
       container.innerHTML =
-        '<div style="padding:12px;color:#444;font-size:10px;">No activity yet.</div>';
+        '<div style="padding:12px;color:#444;font-size:9px;">No activity yet.</div>';
 
       return;
     }
@@ -3681,7 +3643,7 @@ async function refreshLogs() {
   } catch (error) {
 
     container.innerHTML =
-      '<div style="padding:12px;color:#555;font-size:10px;">Unable to load logs.</div>';
+      '<div style="padding:12px;color:#555;font-size:9px;">Unable to load logs.</div>';
 
   }
 
@@ -3715,6 +3677,10 @@ function escapeText(value) {
 
 }
 
+/* ==========================================================
+   START DASHBOARD REFRESH
+   ========================================================== */
+
 refreshStatus();
 refreshLogs();
 
@@ -3744,6 +3710,7 @@ app.get(
   "/api/status",
   requireAuth,
   (req, res) => {
+
     res.json({
       name: botName,
       uid: botUserID,
@@ -3751,9 +3718,9 @@ app.get(
       error: botError,
       uptime: uptimeText(),
       loggedIn: Boolean(botApi),
-      connecting: botConnecting,
-      protection: getProtectionStatus()
+      connecting: botConnecting
     });
+
   }
 );
 
@@ -3765,9 +3732,11 @@ app.get(
   "/api/logs",
   requireAuth,
   (req, res) => {
+
     res.json({
       logs: systemLogs
     });
+
   }
 );
 
@@ -3779,28 +3748,42 @@ app.post(
   "/bot-login",
   requireAuth,
   async (req, res) => {
+
     try {
+
       const input =
         req.body?.appstate;
 
       if (!input) {
-        return res.status(400).json({
-          error:
-            "AppState/C3C is required."
-        });
+
+        return res
+          .status(400)
+          .json({
+            error:
+              "AppState/C3C is required."
+          });
+
       }
 
       if (botConnecting) {
-        return res.status(409).json({
-          error:
-            "Bot login is already in progress."
-        });
+
+        return res
+          .status(409)
+          .json({
+            error:
+              "Bot login is already in progress."
+          });
+
       }
 
       const result =
-        await loginBot(input);
+        await loginBot(
+          input
+        );
 
-      return res.json(result);
+      return res.json(
+        result
+      );
 
     } catch (error) {
 
@@ -3814,6 +3797,7 @@ app.post(
         });
 
     }
+
   }
 );
 
@@ -3973,9 +3957,9 @@ server.listen(
       `Command Center started on port ${PORT}`
     );
 
-    /* ------------------------------------------
-       AUTO LOGIN
-       ------------------------------------------ */
+    /*
+     * Auto-login from saved session.
+     */
 
     const savedSession =
       getSavedSession();
@@ -4033,3 +4017,29 @@ module.exports = {
   handleBanatCommand,
   loginBot
 };
+
+Files na dapat nasa root:
+
+Cresi/
+├── index.js              ← itong bago
+├── package.json
+├── triggers.js
+├── banat-human.js
+├── banat-targeting.js
+├── setallnick.js
+├── gcname-lock.js
+└── appstate.json         ← optional; automatic na nagagawa pagkatapos successful login
+
+Important: kung Render pa rin ang gamit mo, siguraduhing ang Start Command ay:
+
+npm start
+
+At sa "package.json", dapat may:
+
+"scripts": {
+  "start": "node index.js"
+}
+
+Huwag mong i-run ang "dashboard.js" separately. Ang dashboard ay built-in na mismo sa "index.js".
+
+Isang security note: dahil hardcoded ang dashboard credentials na "admin / halimaw123", huwag mong gawing public ang repository kung ayaw mong madaling makita ang credentials.
