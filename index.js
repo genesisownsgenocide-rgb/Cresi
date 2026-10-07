@@ -60,14 +60,16 @@ const {
 const PORT = Number(process.env.PORT || 10000);
 
 /*
- * Dashboard credentials requested by user.
+ * Dashboard credentials.
+ *
+ * These are intentionally hardcoded as requested.
  */
 const DASHBOARD_USERNAME = "Admin";
 const DASHBOARD_PASSWORD = "sinzuontop";
 
-/*
- * BANAT settings
- */
+
+/* BANAT SETTINGS */
+
 const DEFAULT_ON =
   /^(1|true|yes|on)$/i.test(
     process.env.BANAT_DEFAULT_ON || "false"
@@ -75,15 +77,24 @@ const DEFAULT_ON =
 
 const GLOBAL_SEND_LIMIT = Math.max(
   1,
-  Number(process.env.BANAT_GLOBAL_SEND_LIMIT || 2)
+  Number(
+    process.env.BANAT_GLOBAL_SEND_LIMIT || 2
+  )
 );
 
 const THREAD_COOLDOWN_MS = Math.max(
   0,
-  Number(process.env.BANAT_THREAD_COOLDOWN_MS || 12000)
+  Number(
+    process.env.BANAT_THREAD_COOLDOWN_MS ||
+    12000
+  )
 );
 
-const RETRY_DELAYS = [1500, 4000, 8000];
+const RETRY_DELAYS = [
+  1500,
+  4000,
+  8000
+];
 
 
 /* =========================================================
@@ -108,27 +119,34 @@ let globalActive = 0;
 
 
 /* =========================================================
-   DASHBOARD AUTH STATE
+   DASHBOARD SESSION STATE
 ========================================================= */
 
 const dashboardSessions = new Map();
 
-const SESSION_MAX_AGE = 24 * 60 * 60 * 1000;
+const SESSION_MAX_AGE =
+  24 * 60 * 60 * 1000;
 
 
 /* =========================================================
-   LOG BUFFER
+   DASHBOARD LOG BUFFER
 ========================================================= */
 
 const dashboardLogs = [];
+
 const MAX_LOGS = 150;
 
+
 function addLog(message) {
-  const line = `[${new Date().toISOString()}] ${message}`;
+  const line =
+    `[${new Date().toISOString()}] ${message}`;
 
   dashboardLogs.push(line);
 
-  if (dashboardLogs.length > MAX_LOGS) {
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
     dashboardLogs.shift();
   }
 
@@ -137,22 +155,36 @@ function addLog(message) {
 
 
 /*
- * Keep normal console.log output visible while also storing
- * useful dashboard logs.
+ * Keep console output visible while also
+ * storing it for the dashboard.
  */
-const originalConsoleLog = console.log;
-const originalConsoleError = console.error;
+
+const originalConsoleLog =
+  console.log;
+
+const originalConsoleError =
+  console.error;
+
+const originalConsoleWarn =
+  console.warn;
+
 
 console.log = (...args) => {
   const message = args
-    .map(x => {
-      if (typeof x === "string") return x;
+    .map(value => {
+
+      if (
+        typeof value === "string"
+      ) {
+        return value;
+      }
 
       try {
-        return JSON.stringify(x);
+        return JSON.stringify(value);
       } catch (_) {
-        return String(x);
+        return String(value);
       }
+
     })
     .join(" ");
 
@@ -160,23 +192,33 @@ console.log = (...args) => {
     `[${new Date().toISOString()}] ${message}`
   );
 
-  if (dashboardLogs.length > MAX_LOGS) {
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
     dashboardLogs.shift();
   }
 
   originalConsoleLog(...args);
 };
 
+
 console.error = (...args) => {
   const message = args
-    .map(x => {
-      if (typeof x === "string") return x;
+    .map(value => {
+
+      if (
+        typeof value === "string"
+      ) {
+        return value;
+      }
 
       try {
-        return JSON.stringify(x);
+        return JSON.stringify(value);
       } catch (_) {
-        return String(x);
+        return String(value);
       }
+
     })
     .join(" ");
 
@@ -184,11 +226,48 @@ console.error = (...args) => {
     `[${new Date().toISOString()}] ERROR ${message}`
   );
 
-  if (dashboardLogs.length > MAX_LOGS) {
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
     dashboardLogs.shift();
   }
 
   originalConsoleError(...args);
+};
+
+
+console.warn = (...args) => {
+  const message = args
+    .map(value => {
+
+      if (
+        typeof value === "string"
+      ) {
+        return value;
+      }
+
+      try {
+        return JSON.stringify(value);
+      } catch (_) {
+        return String(value);
+      }
+
+    })
+    .join(" ");
+
+  dashboardLogs.push(
+    `[${new Date().toISOString()}] WARN ${message}`
+  );
+
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
+    dashboardLogs.shift();
+  }
+
+  originalConsoleWarn(...args);
 };
 
 
@@ -197,15 +276,9 @@ console.error = (...args) => {
 ========================================================= */
 
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function safeJSON(value) {
-  try {
-    return JSON.stringify(value);
-  } catch (_) {
-    return String(value);
-  }
+  return new Promise(
+    resolve => setTimeout(resolve, ms)
+  );
 }
 
 
@@ -214,38 +287,58 @@ function safeJSON(value) {
 ========================================================= */
 
 function readSession() {
+
   const raw =
     process.env.FB_COOKIES ||
     process.env.FB_APPSTATE;
 
   if (raw) {
-    const trimmed = String(raw).trim();
+
+    const trimmed =
+      String(raw).trim();
 
     try {
-      return JSON.parse(trimmed);
+
+      return JSON.parse(
+        trimmed
+      );
+
     } catch (_) {
+
       return trimmed;
     }
   }
 
-  for (const file of [
-    "appstate.json",
-    "cookies.json"
-  ]) {
-    const filePath = path.join(
-      process.cwd(),
-      file
-    );
 
-    if (fs.existsSync(filePath)) {
+  for (
+    const file of [
+      "appstate.json",
+      "cookies.json"
+    ]
+  ) {
+
+    const filePath =
+      path.join(
+        process.cwd(),
+        file
+      );
+
+    if (
+      fs.existsSync(filePath)
+    ) {
+
       return JSON.parse(
-        fs.readFileSync(filePath, "utf8")
+        fs.readFileSync(
+          filePath,
+          "utf8"
+        )
       );
     }
   }
 
+
   throw new Error(
-    "No Facebook session found. Enter a session in the dashboard or set FB_COOKIES/FB_APPSTATE."
+    "No Facebook session found. Enter a session in the dashboard or configure FB_COOKIES/FB_APPSTATE."
   );
 }
 
@@ -255,10 +348,16 @@ function readSession() {
 ========================================================= */
 
 function normalizeSession(value) {
-  if (typeof value === "string") {
-    const cookie = value.trim();
+
+  if (
+    typeof value === "string"
+  ) {
+
+    const cookie =
+      value.trim();
 
     if (!cookie) {
+
       throw new Error(
         "Facebook cookie session is empty."
       );
@@ -266,6 +365,7 @@ function normalizeSession(value) {
 
     return cookie;
   }
+
 
   const entries =
     Array.isArray(value)
@@ -276,38 +376,49 @@ function normalizeSession(value) {
           ? value.cookies
           : null;
 
+
   if (!entries) {
+
     throw new Error(
       "Facebook session must be a cookie string or a JSON array of cookie/appState entries."
     );
   }
 
-  const parts = entries
-    .map(cookie => {
-      const key =
-        cookie?.key ??
-        cookie?.name;
 
-      const val =
-        cookie?.value;
+  const parts =
+    entries
+      .map(cookie => {
 
-      if (key == null || val == null) {
-        return null;
-      }
+        const key =
+          cookie?.key ??
+          cookie?.name;
 
-      return (
-        String(key).trim() +
-        "=" +
-        String(val)
-      );
-    })
-    .filter(Boolean);
+        const val =
+          cookie?.value;
+
+        if (
+          key == null ||
+          val == null
+        ) {
+          return null;
+        }
+
+        return (
+          String(key).trim() +
+          "=" +
+          String(val)
+        );
+      })
+      .filter(Boolean);
+
 
   if (!parts.length) {
+
     throw new Error(
       "Facebook session contains no valid cookie entries."
     );
   }
+
 
   return parts.join("; ");
 }
@@ -317,24 +428,41 @@ function normalizeSession(value) {
    QUEUE
 ========================================================= */
 
-function enqueue(threadID, job) {
-  const key = String(threadID);
+function enqueue(
+  threadID,
+  job
+) {
+
+  const key =
+    String(threadID);
 
   const current =
     threadQueues.get(key) ||
     Promise.resolve();
+
 
   const next =
     current
       .catch(() => {})
       .then(job)
       .finally(() => {
-        if (threadQueues.get(key) === next) {
-          threadQueues.delete(key);
+
+        if (
+          threadQueues.get(key) ===
+          next
+        ) {
+
+          threadQueues.delete(
+            key
+          );
         }
       });
 
-  threadQueues.set(key, next);
+
+  threadQueues.set(
+    key,
+    next
+  );
 
   return next;
 }
@@ -345,20 +473,26 @@ function enqueue(threadID, job) {
 ========================================================= */
 
 async function acquireGlobalSlot() {
+
   while (
-    globalActive >= GLOBAL_SEND_LIMIT
+    globalActive >=
+    GLOBAL_SEND_LIMIT
   ) {
+
     await sleep(150);
   }
 
   globalActive++;
 }
 
+
 function releaseGlobalSlot() {
-  globalActive = Math.max(
-    0,
-    globalActive - 1
-  );
+
+  globalActive =
+    Math.max(
+      0,
+      globalActive - 1
+    );
 }
 
 
@@ -367,9 +501,11 @@ function releaseGlobalSlot() {
 ========================================================= */
 
 function is1545012(error) {
-  const text = JSON.stringify(
-    error || ""
-  );
+
+  const text =
+    JSON.stringify(
+      error || ""
+    );
 
   return /1545012|temporarily unavailable|message could not be sent/i.test(
     text
@@ -388,184 +524,241 @@ function trafficSendMessage(
   callback,
   replyToMessageID = null
 ) {
-  const key = String(threadID);
 
-  return enqueue(key, async () => {
+  const key =
+    String(threadID);
 
-    const now = Date.now();
 
-    const cooldownUntil =
-      Number(
-        threadCooldown.get(key) || 0
-      );
+  return enqueue(
+    key,
+    async () => {
 
-    if (cooldownUntil > now) {
-      callback(
-        new Error(
-          `thread cooldown active for ${
-            cooldownUntil - now
-          }ms`
-        )
-      );
+      const now =
+        Date.now();
 
-      return;
-    }
 
-    const sinceLast =
-      now -
-      Number(
-        threadLastSent.get(key) || 0
-      );
+      const cooldownUntil =
+        Number(
+          threadCooldown.get(key) ||
+          0
+        );
 
-    if (
-      sinceLast <
-      THREAD_COOLDOWN_MS
-    ) {
-      await sleep(
-        THREAD_COOLDOWN_MS -
-        sinceLast
-      );
-    }
 
-    await acquireGlobalSlot();
-
-    try {
-
-      let lastError = null;
-
-      for (
-        let attempt = 0;
-        attempt <= RETRY_DELAYS.length;
-        attempt++
+      if (
+        cooldownUntil >
+        now
       ) {
 
-        try {
+        callback(
+          new Error(
+            `thread cooldown active for ${
+              cooldownUntil - now
+            }ms`
+          )
+        );
 
-          const result =
-            await new Promise(
-              (resolve, reject) => {
+        return;
+      }
 
-                let settled = false;
 
-                const done = (
-                  err,
-                  info
-                ) => {
+      const sinceLast =
+        now -
+        Number(
+          threadLastSent.get(key) ||
+          0
+        );
 
-                  if (settled) {
-                    return;
+
+      if (
+        sinceLast <
+        THREAD_COOLDOWN_MS
+      ) {
+
+        await sleep(
+          THREAD_COOLDOWN_MS -
+          sinceLast
+        );
+      }
+
+
+      await acquireGlobalSlot();
+
+
+      try {
+
+        let lastError =
+          null;
+
+
+        for (
+          let attempt = 0;
+          attempt <=
+            RETRY_DELAYS.length;
+          attempt++
+        ) {
+
+          try {
+
+            const result =
+              await new Promise(
+                (resolve, reject) => {
+
+                  let settled =
+                    false;
+
+
+                  const done =
+                    (
+                      err,
+                      info
+                    ) => {
+
+                      if (
+                        settled
+                      ) {
+                        return;
+                      }
+
+                      settled =
+                        true;
+
+
+                      if (err) {
+                        reject(err);
+                      } else {
+                        resolve(info);
+                      }
+                    };
+
+
+                  try {
+
+                    let returned;
+
+
+                    if (
+                      replyToMessageID
+                    ) {
+
+                      returned =
+                        apiInstance.sendMessage(
+                          message,
+                          threadID,
+                          done,
+                          replyToMessageID
+                        );
+
+                    } else {
+
+                      returned =
+                        apiInstance.sendMessage(
+                          message,
+                          threadID,
+                          done
+                        );
+                    }
+
+
+                    if (
+                      returned &&
+                      typeof returned.then ===
+                        "function"
+                    ) {
+
+                      returned
+                        .then(
+                          info =>
+                            done(
+                              null,
+                              info
+                            )
+                        )
+                        .catch(done);
+                    }
+
+                  } catch (error) {
+
+                    reject(error);
                   }
-
-                  settled = true;
-
-                  if (err) {
-                    reject(err);
-                  } else {
-                    resolve(info);
-                  }
-                };
-
-                try {
-
-                  let returned;
-
-                  if (
-                    replyToMessageID
-                  ) {
-
-                    returned =
-                      apiInstance.sendMessage(
-                        message,
-                        threadID,
-                        done,
-                        replyToMessageID
-                      );
-
-                  } else {
-
-                    returned =
-                      apiInstance.sendMessage(
-                        message,
-                        threadID,
-                        done
-                      );
-                  }
-
-                  if (
-                    returned &&
-                    typeof returned.then ===
-                      "function"
-                  ) {
-
-                    returned
-                      .then(info =>
-                        done(null, info)
-                      )
-                      .catch(done);
-                  }
-
-                } catch (e) {
-                  reject(e);
                 }
-              }
+              );
+
+
+            threadLastSent.set(
+              key,
+              Date.now()
             );
 
-          threadLastSent.set(
-            key,
-            Date.now()
-          );
 
-          callback(
-            null,
-            result
-          );
+            callback(
+              null,
+              result
+            );
 
-          return;
+            return;
 
-        } catch (error) {
 
-          lastError = error;
+          } catch (error) {
 
-          if (
-            !is1545012(error) ||
-            attempt >=
-              RETRY_DELAYS.length
-          ) {
-            break;
+            lastError =
+              error;
+
+
+            if (
+              !is1545012(error) ||
+              attempt >=
+                RETRY_DELAYS.length
+            ) {
+
+              break;
+            }
+
+
+            threadCooldown.set(
+              key,
+              Date.now() +
+                Math.min(
+                  15000,
+                  RETRY_DELAYS[attempt]
+                )
+            );
+
+
+            await sleep(
+              RETRY_DELAYS[attempt]
+            );
+
+
+            threadCooldown.delete(
+              key
+            );
           }
+        }
+
+
+        if (
+          is1545012(lastError)
+        ) {
 
           threadCooldown.set(
             key,
             Date.now() +
-              Math.min(
-                15000,
-                RETRY_DELAYS[attempt]
-              )
+              5 * 60 * 1000
           );
-
-          await sleep(
-            RETRY_DELAYS[attempt]
-          );
-
-          threadCooldown.delete(key);
         }
-      }
 
-      if (is1545012(lastError)) {
 
-        threadCooldown.set(
-          key,
-          Date.now() +
-            5 * 60 * 1000
+        callback(
+          lastError
         );
+
+
+      } finally {
+
+        releaseGlobalSlot();
       }
-
-      callback(lastError);
-
-    } finally {
-      releaseGlobalSlot();
     }
-  });
+  );
 }
 
 
@@ -574,6 +767,7 @@ function trafficSendMessage(
 ========================================================= */
 
 function isBanatCommand(body) {
+
   return /^!banat(?:\s|$)/i.test(
     String(body || "").trim()
   );
@@ -590,28 +784,35 @@ function commandSendMessage(
   threadID,
   replyToMessageID = null
 ) {
+
   return new Promise(
     (resolve, reject) => {
 
-      let settled = false;
+      let settled =
+        false;
 
-      const done = (
-        err,
-        info
-      ) => {
 
-        if (settled) {
-          return;
-        }
+      const done =
+        (
+          err,
+          info
+        ) => {
 
-        settled = true;
+          if (settled) {
+            return;
+          }
 
-        if (err) {
-          reject(err);
-        } else {
-          resolve(info);
-        }
-      };
+          settled =
+            true;
+
+
+          if (err) {
+            reject(err);
+          } else {
+            resolve(info);
+          }
+        };
+
 
       try {
 
@@ -629,6 +830,7 @@ function commandSendMessage(
                 done
               );
 
+
         if (
           returned &&
           typeof returned.then ===
@@ -636,13 +838,19 @@ function commandSendMessage(
         ) {
 
           returned
-            .then(info =>
-              done(null, info)
+            .then(
+              info =>
+                done(
+                  null,
+                  info
+                )
             )
             .catch(done);
         }
 
+
       } catch (error) {
+
         done(error);
       }
     }
@@ -663,6 +871,7 @@ function sendCommandReply(
   const threadID =
     String(event.threadID);
 
+
   commandSendMessage(
     apiInstance,
     message,
@@ -670,15 +879,20 @@ function sendCommandReply(
     event.messageID || null
   )
     .then(() => {
+
       console.log(
         `[BANAT] command reply sent: ${message}`
       );
+
     })
     .catch(error => {
+
       console.error(
         "[BANAT] command reply failed:",
-        error?.message || error
+        error?.message ||
+          error
       );
+
     });
 }
 
@@ -696,10 +910,12 @@ function handleBanatCommand(
   const threadID =
     String(event.threadID);
 
+
   const parts =
     String(body)
       .trim()
       .split(/\s+/);
+
 
   const sub =
     (
@@ -720,21 +936,26 @@ function handleBanatCommand(
       event.senderID
     );
 
+
     activeThreads.add(
       threadID
     );
 
+
     console.log(
       `[BANAT] activated thread ${threadID} by ${
-        event.senderID || "unknown"
+        event.senderID ||
+        "unknown"
       }`
     );
+
 
     sendCommandReply(
       apiInstance,
       event,
       "banat is on. say whatever u want 😭"
     );
+
 
     return true;
   }
@@ -751,13 +972,16 @@ function handleBanatCommand(
       false
     );
 
+
     activeThreads.delete(
       threadID
     );
 
+
     console.log(
       `[BANAT] deactivated thread ${threadID}`
     );
+
 
     sendCommandReply(
       apiInstance,
@@ -765,16 +989,20 @@ function handleBanatCommand(
       "banat off. peace 😭"
     );
 
+
     return true;
   }
 
 
-  if (sub === "toggle") {
+  if (
+    sub === "toggle"
+  ) {
 
     const next =
       !isBanatConversationModeActive(
         threadID
       );
+
 
     setBanatConversationMode(
       threadID,
@@ -782,21 +1010,29 @@ function handleBanatCommand(
       event.senderID
     );
 
+
     if (next) {
+
       activeThreads.add(
         threadID
       );
+
     } else {
+
       activeThreads.delete(
         threadID
       );
     }
 
+
     console.log(
       `[BANAT] toggled thread ${threadID}: ${
-        next ? "ON" : "OFF"
+        next
+          ? "ON"
+          : "OFF"
       }`
     );
+
 
     sendCommandReply(
       apiInstance,
@@ -806,17 +1042,23 @@ function handleBanatCommand(
         : "banat is off"
     );
 
+
     return true;
   }
 
 
-  if (sub === "status") {
+  if (
+    sub === "status"
+  ) {
 
     const on =
-      activeThreads.has(threadID) ||
+      activeThreads.has(
+        threadID
+      ) ||
       isBanatConversationModeActive(
         threadID
       );
+
 
     sendCommandReply(
       apiInstance,
@@ -826,17 +1068,21 @@ function handleBanatCommand(
         : "banat: OFF 🔴"
     );
 
+
     return true;
   }
 
 
-  if (sub === "help") {
+  if (
+    sub === "help"
+  ) {
 
     sendCommandReply(
       apiInstance,
       event,
       "!banat on · !banat off · !banat toggle · !banat status"
     );
+
 
     return true;
   }
@@ -847,6 +1093,7 @@ function handleBanatCommand(
     event,
     "unknown banat command. use !banat help"
   );
+
 
   return true;
 }
@@ -890,12 +1137,14 @@ function onMessage(
     return;
   }
 
+
   if (
     event.type &&
     event.type !== "message"
   ) {
     return;
   }
+
 
   if (
     event.senderID &&
@@ -906,14 +1155,17 @@ function onMessage(
     return;
   }
 
+
   const body =
     String(
       event.body || ""
     ).trim();
 
+
   if (!body) {
     return;
   }
+
 
   messageCount++;
 
@@ -921,15 +1173,20 @@ function onMessage(
   /*
    * BANAT COMMANDS
    */
-  if (isBanatCommand(body)) {
+
+  if (
+    isBanatCommand(body)
+  ) {
 
     commandCount++;
+
 
     handleBanatCommand(
       apiInstance,
       event,
       body
     );
+
 
     return;
   }
@@ -938,30 +1195,38 @@ function onMessage(
   const threadID =
     String(event.threadID);
 
+
   const active =
-    activeThreads.has(threadID) ||
+    activeThreads.has(
+      threadID
+    ) ||
     isBanatConversationModeActive(
       threadID
     );
+
 
   const target =
     classifyBanatTarget({
       event,
       body,
-      botID: botUserID
+      botID:
+        botUserID
     });
 
 
   /*
    * ACTIVE BANAT THREAD
    */
+
   if (active) {
 
     console.log(
       `[BANAT] active message in ${threadID} from ${
-        event.senderID || "unknown"
+        event.senderID ||
+        "unknown"
       }`
     );
+
 
     const reply =
       getTriggerReply(
@@ -973,28 +1238,30 @@ function onMessage(
         threadID
       );
 
+
     if (reply) {
 
       sendBanat(
         apiInstance,
         event,
         reply
-      ).catch(error => {
+      )
+        .catch(error => {
 
-        console.error(
-          "[BANAT] reply error:",
-          error
-        );
+          console.error(
+            "[BANAT] reply error:",
+            error
+          );
 
-      });
+        });
 
     } else {
 
       console.warn(
         `[BANAT] no reply generated for active message in ${threadID}`
       );
-
     }
+
 
     return;
   }
@@ -1003,7 +1270,10 @@ function onMessage(
   /*
    * TARGETED BANAT
    */
-  if (target.shouldRespond) {
+
+  if (
+    target.shouldRespond
+  ) {
 
     const reply =
       getTriggerReply(
@@ -1015,21 +1285,22 @@ function onMessage(
         threadID
       );
 
+
     if (reply) {
 
       sendBanat(
         apiInstance,
         event,
         reply
-      ).catch(error => {
+      )
+        .catch(error => {
 
-        console.error(
-          "[BANAT]",
-          error
-        );
+          console.error(
+            "[BANAT]",
+            error
+          );
 
-      });
-
+        });
     }
   }
 }
@@ -1039,9 +1310,13 @@ function onMessage(
    BOT START
 ========================================================= */
 
-function start(apiInstance) {
+function start(
+  apiInstance
+) {
 
-  api = apiInstance;
+  api =
+    apiInstance;
+
 
   try {
 
@@ -1052,20 +1327,26 @@ function start(apiInstance) {
       );
 
   } catch (_) {
+
     botUserID = "";
   }
+
 
   botConnectedAt =
     Date.now();
 
-  botConnecting = false;
 
-  if (DEFAULT_ON) {
+  botConnecting =
+    false;
+
+
+  if (
+    DEFAULT_ON
+  ) {
 
     console.log(
       "[BANAT] BANAT_DEFAULT_ON enabled."
     );
-
   }
 
 
@@ -1082,26 +1363,37 @@ function start(apiInstance) {
         return;
       }
 
+
       try {
 
         if (
           DEFAULT_ON &&
           event?.threadID &&
           event?.senderID &&
-          String(event.senderID) !==
-            String(botUserID)
+          String(
+            event.senderID
+          ) !==
+            String(
+              botUserID
+            )
         ) {
 
           const key =
-            String(event.threadID);
+            String(
+              event.threadID
+            );
+
 
           if (
-            !activeThreads.has(key)
+            !activeThreads.has(
+              key
+            )
           ) {
 
             activeThreads.add(
               key
             );
+
 
             setBanatConversationMode(
               key,
@@ -1111,21 +1403,23 @@ function start(apiInstance) {
           }
         }
 
+
         onMessage(
           apiInstance,
           event
         );
 
-      } catch (e) {
+
+      } catch (error) {
 
         console.error(
           "[BANAT] message handler error:",
-          e
+          error
         );
-
       }
     }
   );
+
 
   console.log(
     `[BANAT] online${
@@ -1145,19 +1439,24 @@ function connectBotWithSession(
   session
 ) {
 
-  if (botConnecting) {
+  if (
+    botConnecting
+  ) {
 
     return Promise.reject(
       new Error(
         "Bot is already connecting."
       )
     );
-
   }
 
-  botConnecting = true;
+
+  botConnecting =
+    true;
+
 
   let cookie;
+
 
   try {
 
@@ -1168,7 +1467,9 @@ function connectBotWithSession(
 
   } catch (error) {
 
-    botConnecting = false;
+    botConnecting =
+      false;
+
 
     return Promise.reject(
       error
@@ -1177,8 +1478,9 @@ function connectBotWithSession(
 
 
   /*
-   * Do NOT print the actual cookie.
+   * Never print the actual cookie/session.
    */
+
   console.log(
     `[BANAT] logging in with dashboard session (${cookie.length} chars)...`
   );
@@ -1187,72 +1489,102 @@ function connectBotWithSession(
   return new Promise(
     (resolve, reject) => {
 
-      let finished = false;
+      let finished =
+        false;
 
-      function finishError(error) {
+
+      function finishError(
+        error
+      ) {
 
         if (finished) {
           return;
         }
 
-        finished = true;
 
-        botConnecting = false;
+        finished =
+          true;
+
+
+        botConnecting =
+          false;
+
 
         console.error(
           "[BANAT] login failed:",
-          error
+          error?.message ||
+            error
         );
+
 
         reject(error);
       }
 
 
-      login(
-        cookie,
-        (error, loggedApi) => {
+      try {
 
-          if (error) {
+        login(
+          cookie,
+          (error, loggedApi) => {
 
-            finishError(
-              error
-            );
+            if (error) {
 
-            return;
+              finishError(
+                error
+              );
+
+              return;
+            }
+
+
+            if (!loggedApi) {
+
+              finishError(
+                new Error(
+                  "Facebook login returned no API object."
+                )
+              );
+
+              return;
+            }
+
+
+            try {
+
+              start(
+                loggedApi
+              );
+
+
+              finished =
+                true;
+
+
+              botConnecting =
+                false;
+
+
+              resolve({
+                ok: true
+              });
+
+
+            } catch (error) {
+
+              finishError(
+                error
+              );
+            }
           }
-
-          if (!loggedApi) {
-
-            finishError(
-              new Error(
-                "Facebook login returned no API object."
-              )
-            );
-
-            return;
-          }
+        );
 
 
-          try {
+      } catch (error) {
 
-            start(
-              loggedApi
-            );
-
-            finished = true;
-
-            resolve({
-              ok: true
-            });
-
-          } catch (error) {
-
-            finishError(
-              error
-            );
-          }
-        }
-      );
+        finishError(
+          error
+        );
+      }
     }
   );
 }
@@ -1265,8 +1597,10 @@ function connectBotWithSession(
 function disconnectBot() {
 
   if (!api) {
+
     return false;
   }
+
 
   try {
 
@@ -1274,6 +1608,7 @@ function disconnectBot() {
       typeof api.logout ===
       "function"
     ) {
+
       api.logout(
         () => {}
       );
@@ -1285,36 +1620,57 @@ function disconnectBot() {
       "[BANAT] logout error:",
       error
     );
-
   }
 
-  api = null;
-  botUserID = "";
-  botConnectedAt = 0;
-  botConnecting = false;
+
+  api =
+    null;
+
+
+  botUserID =
+    "";
+
+
+  botConnectedAt =
+    0;
+
+
+  botConnecting =
+    false;
+
 
   console.log(
     "[BANAT] disconnected."
   );
+
 
   return true;
 }
 
 
 /* =========================================================
-   DASHBOARD SESSION AUTH
+   DASHBOARD AUTH
 ========================================================= */
 
 function createDashboardSession() {
 
+  cleanupDashboardSessions();
+
+
   const token =
-    crypto.randomBytes(32)
+    crypto
+      .randomBytes(48)
       .toString("hex");
+
 
   dashboardSessions.set(
     token,
-    Date.now()
+    {
+      createdAt:
+        Date.now()
+    }
   );
+
 
   return token;
 }
@@ -1325,16 +1681,25 @@ function cleanupDashboardSessions() {
   const now =
     Date.now();
 
+
   for (
     const [
       token,
-      createdAt
+      session
     ] of dashboardSessions
   ) {
 
+    const createdAt =
+      typeof session ===
+      "object"
+        ? session.createdAt
+        : session;
+
+
     if (
+      !createdAt ||
       now - createdAt >
-      SESSION_MAX_AGE
+        SESSION_MAX_AGE
     ) {
 
       dashboardSessions.delete(
@@ -1345,37 +1710,70 @@ function cleanupDashboardSessions() {
 }
 
 
-function getCookie(req, name) {
+function getCookie(
+  req,
+  name
+) {
 
   const header =
-    req.headers.cookie || "";
+    req.headers.cookie ||
+    "";
+
 
   const cookies =
     header
       .split(";")
-      .map(x => x.trim());
+      .map(
+        value =>
+          value.trim()
+      );
 
-  for (const item of cookies) {
+
+  for (
+    const item of cookies
+  ) {
 
     const index =
       item.indexOf("=");
 
-    if (index === -1) {
+
+    if (
+      index === -1
+    ) {
       continue;
     }
 
+
     const key =
-      item.slice(0, index);
+      item.slice(
+        0,
+        index
+      );
+
 
     const value =
-      item.slice(index + 1);
-
-    if (key === name) {
-      return decodeURIComponent(
-        value
+      item.slice(
+        index + 1
       );
+
+
+    if (
+      key === name
+    ) {
+
+      try {
+
+        return decodeURIComponent(
+          value
+        );
+
+      } catch (_) {
+
+        return value;
+      }
     }
   }
+
 
   return null;
 }
@@ -1387,36 +1785,52 @@ function isDashboardAuthenticated(
 
   cleanupDashboardSessions();
 
+
   const token =
     getCookie(
       req,
       "dashboard_session"
     );
 
+
   if (!token) {
     return false;
   }
 
-  const createdAt =
+
+  const session =
     dashboardSessions.get(
       token
     );
 
-  if (!createdAt) {
+
+  if (!session) {
     return false;
   }
 
+
+  const createdAt =
+    typeof session ===
+    "object"
+      ? session.createdAt
+      : session;
+
+
   if (
-    Date.now() - createdAt >
-    SESSION_MAX_AGE
+    !createdAt ||
+    Date.now() -
+      createdAt >
+      SESSION_MAX_AGE
   ) {
 
     dashboardSessions.delete(
       token
     );
 
+
     return false;
   }
+
 
   return true;
 }
@@ -1433,34 +1847,50 @@ function sendJSON(
 ) {
 
   const body =
-    JSON.stringify(data);
+    JSON.stringify(
+      data
+    );
+
 
   res.writeHead(
     status,
     {
-      "content-type":
+      "Content-Type":
         "application/json; charset=utf-8",
-      "cache-control":
-        "no-store"
+
+      "Cache-Control":
+        "no-store",
+
+      "Pragma":
+        "no-cache"
     }
   );
 
-  res.end(body);
+
+  res.end(
+    body
+  );
 }
 
 
-function readBody(req) {
+function readBody(
+  req
+) {
 
   return new Promise(
     (resolve, reject) => {
 
-      let data = "";
+      let data =
+        "";
+
 
       req.on(
         "data",
         chunk => {
 
-          data += chunk;
+          data +=
+            chunk;
+
 
           if (
             data.length >
@@ -1473,15 +1903,23 @@ function readBody(req) {
               )
             );
 
+
             req.destroy();
           }
         }
       );
 
+
       req.on(
         "end",
-        () => resolve(data)
+        () => {
+
+          resolve(
+            data
+          );
+        }
       );
+
 
       req.on(
         "error",
@@ -1493,7 +1931,7 @@ function readBody(req) {
 
 
 /* =========================================================
-   DASHBOARD HTML
+   LOGIN PAGE
 ========================================================= */
 
 function dashboardLoginHTML() {
@@ -1501,8 +1939,19 @@ function dashboardLoginHTML() {
   return `<!DOCTYPE html>
 <html>
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1.0"
+>
+
+<meta
+  name="robots"
+  content="noindex,nofollow"
+>
+
 <title>Sinzu • Admin Login</title>
 
 <style>
@@ -1517,6 +1966,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+
   background:
     radial-gradient(
       circle at top,
@@ -1524,7 +1974,9 @@ body {
       #080a0d 55%,
       #030405 100%
     );
+
   color: #fff;
+
   font-family:
     Arial,
     Helvetica,
@@ -1534,11 +1986,16 @@ body {
 .login-box {
   width: min(420px, 92%);
   padding: 30px;
+
   border: 1px solid #30363d;
   border-radius: 18px;
-  background: rgba(15, 18, 23, .96);
+
+  background:
+    rgba(15, 18, 23, .96);
+
   box-shadow:
-    0 25px 80px rgba(0,0,0,.55);
+    0 25px 80px
+    rgba(0,0,0,.55);
 }
 
 .logo {
@@ -1546,31 +2003,35 @@ body {
   font-size: 30px;
   font-weight: 800;
   letter-spacing: 4px;
-  margin-bottom: 5px;
 }
 
 .sub {
   text-align: center;
   color: #8b949e;
   font-size: 13px;
-  margin-bottom: 28px;
+  margin:
+    5px 0 28px;
 }
 
 label {
   display: block;
   color: #8b949e;
   font-size: 12px;
-  margin: 15px 0 7px;
+  margin:
+    15px 0 7px;
 }
 
 input {
   width: 100%;
   padding: 13px;
+
   border-radius: 10px;
   border: 1px solid #30363d;
   outline: none;
+
   background: #0d1117;
   color: white;
+
   font-size: 14px;
 }
 
@@ -1582,10 +2043,13 @@ button {
   width: 100%;
   margin-top: 20px;
   padding: 13px;
+
   border: 0;
   border-radius: 10px;
+
   background: #fff;
   color: #080a0d;
+
   font-weight: 800;
   cursor: pointer;
 }
@@ -1594,41 +2058,60 @@ button:hover {
   opacity: .9;
 }
 
+button:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
 #error {
   display: none;
+
   margin-top: 15px;
   padding: 11px;
+
   border-radius: 9px;
+
   background: #30151a;
   border: 1px solid #7d2735;
+
   color: #ff7b8b;
+
   font-size: 13px;
   text-align: center;
 }
 
 .footer {
   margin-top: 20px;
+
   text-align: center;
+
   color: #484f58;
+
   font-size: 11px;
 }
 
 </style>
+
 </head>
 
 <body>
 
 <div class="login-box">
 
-  <div class="logo">SINZU</div>
+  <div class="logo">
+    SINZU
+  </div>
 
   <div class="sub">
     BANAT COMMAND CENTER
   </div>
 
+
   <form id="loginForm">
 
-    <label>USERNAME</label>
+    <label>
+      USERNAME
+    </label>
 
     <input
       id="username"
@@ -1637,7 +2120,10 @@ button:hover {
       required
     >
 
-    <label>PASSWORD</label>
+
+    <label>
+      PASSWORD
+    </label>
 
     <input
       id="password"
@@ -1647,15 +2133,21 @@ button:hover {
       required
     >
 
-    <button type="submit">
+
+    <button
+      id="loginButton"
+      type="submit"
+    >
       LOGIN
     </button>
 
   </form>
 
+
   <div id="error">
     Invalid username or password.
   </div>
+
 
   <div class="footer">
     Authorized dashboard only
@@ -1663,63 +2155,146 @@ button:hover {
 
 </div>
 
+
 <script>
 
-document
-  .getElementById("loginForm")
-  .addEventListener("submit", async function(e) {
+const form =
+  document.getElementById(
+    "loginForm"
+  );
 
-    e.preventDefault();
+const button =
+  document.getElementById(
+    "loginButton"
+  );
+
+const errorBox =
+  document.getElementById(
+    "error"
+  );
+
+
+form.addEventListener(
+  "submit",
+  async function(event) {
+
+    event.preventDefault();
+
 
     const username =
-      document.getElementById("username").value;
+      document
+        .getElementById(
+          "username"
+        )
+        .value
+        .trim();
+
 
     const password =
-      document.getElementById("password").value;
+      document
+        .getElementById(
+          "password"
+        )
+        .value;
 
-    const error =
-      document.getElementById("error");
 
-    error.style.display = "none";
+    errorBox.style.display =
+      "none";
+
+
+    button.disabled =
+      true;
+
+    button.textContent =
+      "LOGGING IN...";
+
 
     try {
 
       const response =
-        await fetch("/api/login", {
-          method: "POST",
-          headers: {
-            "content-type":
-              "application/json"
-          },
-          body: JSON.stringify({
-            username,
-            password
-          })
-        });
+        await fetch(
+          "/api/login",
+          {
+            method: "POST",
 
-      const data =
-        await response.json();
+            credentials:
+              "same-origin",
 
-      if (data.ok) {
-        location.href = "/";
+            cache:
+              "no-store",
+
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify({
+                username,
+                password
+              })
+          }
+        );
+
+
+      let data;
+
+
+      try {
+
+        data =
+          await response.json();
+
+      } catch (_) {
+
+        data = {
+          ok: false,
+          error:
+            "Server returned an invalid response."
+        };
+      }
+
+
+      if (
+        response.ok &&
+        data.ok
+      ) {
+
+        window.location.replace(
+          "/"
+        );
+
         return;
       }
 
-      error.textContent =
+
+      errorBox.textContent =
         data.error ||
         "Invalid username or password.";
 
-      error.style.display = "block";
+      errorBox.style.display =
+        "block";
 
-    } catch (err) {
 
-      error.textContent =
-        "Connection error.";
+    } catch (error) {
 
-      error.style.display = "block";
+      errorBox.textContent =
+        "Connection error. Check the Railway deployment logs.";
+
+      errorBox.style.display =
+        "block";
+
+    } finally {
+
+      button.disabled =
+        false;
+
+      button.textContent =
+        "LOGIN";
     }
 
-  });
+  }
+);
 
 </script>
 
@@ -1729,7 +2304,7 @@ document
 
 
 /* =========================================================
-   MAIN DASHBOARD HTML
+   MAIN DASHBOARD
 ========================================================= */
 
 function dashboardHTML() {
@@ -1745,6 +2320,11 @@ function dashboardHTML() {
   content="width=device-width,initial-scale=1.0"
 >
 
+<meta
+  name="robots"
+  content="noindex,nofollow"
+>
+
 <title>Sinzu • Banat Dashboard</title>
 
 <style>
@@ -1755,8 +2335,11 @@ function dashboardHTML() {
 
 body {
   margin: 0;
+
   background: #090b0f;
+
   color: #f0f6fc;
+
   font-family:
     Arial,
     Helvetica,
@@ -1765,11 +2348,21 @@ body {
 
 header {
   padding: 20px;
-  border-bottom: 1px solid #21262d;
-  background: #0d1117;
+
+  border-bottom:
+    1px solid #21262d;
+
+  background:
+    #0d1117;
+
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+
+  justify-content:
+    space-between;
+
+  align-items:
+    center;
+
   gap: 15px;
 }
 
@@ -1781,156 +2374,314 @@ header {
 
 .brand span {
   display: block;
+
   color: #8b949e;
+
   font-size: 10px;
+
   letter-spacing: 2px;
+
   margin-top: 4px;
 }
 
 .logout {
   width: auto;
+
   margin: 0;
-  padding: 9px 15px;
-  border: 1px solid #30363d;
-  background: #161b22;
+
+  padding:
+    9px 15px;
+
+  border:
+    1px solid #30363d;
+
+  background:
+    #161b22;
+
   color: #fff;
-  border-radius: 9px;
+
+  border-radius:
+    9px;
+
   cursor: pointer;
 }
 
 .container {
-  width: min(1100px, 94%);
-  margin: 25px auto;
+  width:
+    min(1100px, 94%);
+
+  margin:
+    25px auto;
 }
 
 .grid {
   display: grid;
+
   grid-template-columns:
-    repeat(auto-fit, minmax(220px, 1fr));
+    repeat(
+      auto-fit,
+      minmax(220px, 1fr)
+    );
+
   gap: 15px;
 }
 
 .card {
-  background: #0d1117;
-  border: 1px solid #21262d;
-  border-radius: 14px;
-  padding: 18px;
-  margin-bottom: 15px;
+  background:
+    #0d1117;
+
+  border:
+    1px solid #21262d;
+
+  border-radius:
+    14px;
+
+  padding:
+    18px;
+
+  margin-bottom:
+    15px;
 }
 
 .card h2 {
-  font-size: 15px;
-  margin: 0 0 14px;
+  font-size:
+    15px;
+
+  margin:
+    0 0 14px;
 }
 
 .stat-label {
-  color: #8b949e;
-  font-size: 11px;
-  text-transform: uppercase;
+  color:
+    #8b949e;
+
+  font-size:
+    11px;
+
+  text-transform:
+    uppercase;
 }
 
 .stat {
-  margin-top: 7px;
-  font-size: 24px;
-  font-weight: 800;
+  margin-top:
+    7px;
+
+  font-size:
+    24px;
+
+  font-weight:
+    800;
 }
 
 .status-online {
-  color: #3fb950;
+  color:
+    #3fb950;
 }
 
 .status-offline {
-  color: #f85149;
+  color:
+    #f85149;
 }
 
 textarea {
   width: 100%;
-  min-height: 170px;
-  resize: vertical;
-  background: #080b0f;
-  color: #f0f6fc;
-  border: 1px solid #30363d;
-  border-radius: 10px;
-  padding: 13px;
-  outline: none;
-  font-family: monospace;
+
+  min-height:
+    170px;
+
+  resize:
+    vertical;
+
+  background:
+    #080b0f;
+
+  color:
+    #f0f6fc;
+
+  border:
+    1px solid #30363d;
+
+  border-radius:
+    10px;
+
+  padding:
+    13px;
+
+  outline:
+    none;
+
+  font-family:
+    monospace;
 }
 
 textarea:focus {
-  border-color: #58a6ff;
+  border-color:
+    #58a6ff;
 }
 
 .buttons {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 12px;
+  display:
+    flex;
+
+  gap:
+    10px;
+
+  flex-wrap:
+    wrap;
+
+  margin-top:
+    12px;
+}
+
+.buttons button {
+  width:
+    auto;
+
+  margin:
+    0;
 }
 
 button {
-  padding: 11px 16px;
-  border: 0;
-  border-radius: 9px;
-  cursor: pointer;
-  font-weight: 700;
+  padding:
+    11px 16px;
+
+  border:
+    0;
+
+  border-radius:
+    9px;
+
+  cursor:
+    pointer;
+
+  font-weight:
+    700;
+}
+
+button:disabled {
+  opacity:
+    .6;
+
+  cursor:
+    wait;
 }
 
 .connect {
-  background: #238636;
-  color: #fff;
+  background:
+    #238636;
+
+  color:
+    #fff;
 }
 
 .disconnect {
-  background: #da3633;
-  color: #fff;
+  background:
+    #da3633;
+
+  color:
+    #fff;
 }
 
 .clear {
-  background: #21262d;
-  color: #fff;
+  background:
+    #21262d;
+
+  color:
+    #fff;
 }
 
 .notice {
-  color: #8b949e;
-  font-size: 12px;
-  line-height: 1.6;
+  color:
+    #8b949e;
+
+  font-size:
+    12px;
+
+  line-height:
+    1.6;
 }
 
 .commands {
-  white-space: pre-line;
-  color: #c9d1d9;
-  font-family: monospace;
-  font-size: 13px;
-  line-height: 1.8;
+  white-space:
+    pre-line;
+
+  color:
+    #c9d1d9;
+
+  font-family:
+    monospace;
+
+  font-size:
+    13px;
+
+  line-height:
+    1.8;
 }
 
 .logs {
-  background: #05070a;
-  border: 1px solid #21262d;
-  border-radius: 10px;
-  padding: 12px;
-  height: 300px;
-  overflow: auto;
-  font-family: monospace;
-  font-size: 11px;
-  color: #8b949e;
-  white-space: pre-wrap;
+  background:
+    #05070a;
+
+  border:
+    1px solid #21262d;
+
+  border-radius:
+    10px;
+
+  padding:
+    12px;
+
+  height:
+    300px;
+
+  overflow:
+    auto;
+
+  font-family:
+    monospace;
+
+  font-size:
+    11px;
+
+  color:
+    #8b949e;
+
+  white-space:
+    pre-wrap;
 }
 
 #message {
-  display: none;
-  padding: 11px;
-  border-radius: 9px;
-  margin-bottom: 15px;
-  background: #101820;
-  border: 1px solid #30363d;
-  color: #c9d1d9;
+  display:
+    none;
+
+  padding:
+    11px;
+
+  border-radius:
+    9px;
+
+  margin-bottom:
+    15px;
+
+  background:
+    #101820;
+
+  border:
+    1px solid #30363d;
+
+  color:
+    #c9d1d9;
 }
 
 .small {
-  color: #8b949e;
-  font-size: 11px;
-  margin-top: 10px;
+  color:
+    #8b949e;
+
+  font-size:
+    11px;
+
+  margin-top:
+    10px;
 }
 
 </style>
@@ -1939,12 +2690,19 @@ button {
 
 <body>
 
+
 <header>
 
   <div class="brand">
+
     SINZU
-    <span>BANAT COMMAND CENTER</span>
+
+    <span>
+      BANAT COMMAND CENTER
+    </span>
+
   </div>
+
 
   <button
     class="logout"
@@ -1958,10 +2716,12 @@ button {
 
 <div class="container">
 
+
   <div id="message"></div>
 
 
   <div class="grid">
+
 
     <div class="card">
 
@@ -2059,6 +2819,7 @@ button {
 
     </div>
 
+
   </div>
 
 
@@ -2068,34 +2829,50 @@ button {
       Facebook Session / C3C
     </h2>
 
+
     <div class="notice">
-      Paste your exported Facebook session/cookie data below.
-      The dashboard does not display the submitted session after connecting.
+
+      Paste your exported Facebook
+      session/cookie data below.
+
+      The dashboard does not display
+      the submitted session after
+      connecting.
+
     </div>
 
+
     <br>
+
 
     <textarea
       id="session"
       placeholder="Paste C3C / cookie / appstate session here..."
       spellcheck="false"
+      autocomplete="off"
     ></textarea>
+
 
     <div class="buttons">
 
+
       <button
+        id="connectButton"
         class="connect"
         onclick="connectBot()"
       >
         CONNECT
       </button>
 
+
       <button
+        id="disconnectButton"
         class="disconnect"
         onclick="disconnectBot()"
       >
         DISCONNECT
       </button>
+
 
       <button
         class="clear"
@@ -2104,10 +2881,13 @@ button {
         CLEAR
       </button>
 
+
     </div>
 
+
     <div class="small">
-      Session data is sent only when you press CONNECT.
+      Session data is sent only when
+      you press CONNECT.
     </div>
 
   </div>
@@ -2118,6 +2898,7 @@ button {
     <h2>
       Messenger Commands
     </h2>
+
 
     <div class="commands">
 
@@ -2138,6 +2919,7 @@ button {
       Group Commands
     </h2>
 
+
     <div class="commands">
 
 !setallnickname
@@ -2146,9 +2928,13 @@ button {
 
     </div>
 
+
     <div class="notice">
+
       These remain Messenger commands.
-      They are not executed from the dashboard.
+      They are not executed from the
+      dashboard.
+
     </div>
 
   </div>
@@ -2160,6 +2946,7 @@ button {
       Logs
     </h2>
 
+
     <div
       id="logs"
       class="logs"
@@ -2169,79 +2956,134 @@ button {
 
   </div>
 
+
 </div>
 
 
 <script>
 
+let refreshing =
+  false;
+
+
 function showMessage(text) {
 
   const box =
-    document.getElementById("message");
+    document.getElementById(
+      "message"
+    );
 
-  box.textContent = text;
-  box.style.display = "block";
 
-  setTimeout(() => {
-    box.style.display = "none";
-  }, 4000);
+  box.textContent =
+    text;
+
+
+  box.style.display =
+    "block";
+
+
+  setTimeout(
+    () => {
+
+      box.style.display =
+        "none";
+
+    },
+    4000
+  );
 }
 
 
-function formatUptime(seconds) {
+function formatUptime(
+  seconds
+) {
 
   seconds =
     Math.max(
       0,
-      Number(seconds || 0)
+      Number(
+        seconds || 0
+      )
     );
+
 
   const d =
     Math.floor(
       seconds / 86400
     );
 
+
   seconds %= 86400;
+
 
   const h =
     Math.floor(
       seconds / 3600
     );
 
+
   seconds %= 3600;
+
 
   const m =
     Math.floor(
       seconds / 60
     );
 
+
   const s =
     Math.floor(
       seconds % 60
     );
 
+
   if (d > 0) {
-    return d + "d " +
+
+    return (
+      d + "d " +
       h + "h " +
-      m + "m";
+      m + "m"
+    );
   }
+
 
   if (h > 0) {
-    return h + "h " +
+
+    return (
+      h + "h " +
       m + "m " +
-      s + "s";
+      s + "s"
+    );
   }
 
+
   if (m > 0) {
-    return m + "m " +
-      s + "s";
+
+    return (
+      m + "m " +
+      s + "s"
+    );
   }
+
 
   return s + "s";
 }
 
 
+/* =========================================================
+   STATUS
+========================================================= */
+
 async function refreshStatus() {
+
+  if (refreshing) {
+    return;
+  }
+
+
+  refreshing =
+    true;
+
 
   try {
 
@@ -2249,16 +3091,30 @@ async function refreshStatus() {
       await fetch(
         "/api/status",
         {
-          cache: "no-store"
+          method:
+            "GET",
+
+          credentials:
+            "same-origin",
+
+          cache:
+            "no-store"
         }
       );
 
+
     if (
-      response.status === 401
+      response.status ===
+      401
     ) {
-      location.href = "/";
+
+      window.location.replace(
+        "/"
+      );
+
       return;
     }
+
 
     const data =
       await response.json();
@@ -2269,10 +3125,16 @@ async function refreshStatus() {
         "status"
       );
 
+
     status.textContent =
       data.connected
         ? "ONLINE"
-        : "OFFLINE";
+        : (
+            data.connecting
+              ? "CONNECTING"
+              : "OFFLINE"
+          );
+
 
     status.className =
       "stat " +
@@ -2286,7 +3148,8 @@ async function refreshStatus() {
     document.getElementById(
       "uid"
     ).textContent =
-      data.userID || "-";
+      data.userID ||
+      "-";
 
 
     document.getElementById(
@@ -2300,19 +3163,22 @@ async function refreshStatus() {
     document.getElementById(
       "messages"
     ).textContent =
-      data.messageCount;
+      data.messageCount ||
+      0;
 
 
     document.getElementById(
       "commands"
     ).textContent =
-      data.commandCount;
+      data.commandCount ||
+      0;
 
 
     document.getElementById(
       "threads"
     ).textContent =
-      data.activeThreads;
+      data.activeThreads ||
+      0;
 
 
     const logs =
@@ -2320,27 +3186,55 @@ async function refreshStatus() {
         "logs"
       );
 
+
     logs.textContent =
-      (data.logs || [])
-        .join("\\n");
+      (
+        data.logs ||
+        []
+      ).join(
+        "\\n"
+      );
+
 
     logs.scrollTop =
       logs.scrollHeight;
 
+
   } catch (error) {
 
-    console.error(error);
+    console.error(
+      error
+    );
 
+  } finally {
+
+    refreshing =
+      false;
   }
 }
 
 
+/* =========================================================
+   CONNECT
+========================================================= */
+
 async function connectBot() {
 
-  const session =
+  const sessionInput =
     document.getElementById(
       "session"
-    ).value.trim();
+    );
+
+
+  const button =
+    document.getElementById(
+      "connectButton"
+    );
+
+
+  const session =
+    sessionInput.value.trim();
+
 
   if (!session) {
 
@@ -2350,6 +3244,14 @@ async function connectBot() {
 
     return;
   }
+
+
+  button.disabled =
+    true;
+
+
+  button.textContent =
+    "CONNECTING...";
 
 
   showMessage(
@@ -2363,23 +3265,50 @@ async function connectBot() {
       await fetch(
         "/api/connect",
         {
-          method: "POST",
+          method:
+            "POST",
+
+          credentials:
+            "same-origin",
+
+          cache:
+            "no-store",
+
           headers: {
-            "content-type":
+            "Content-Type":
               "application/json"
           },
-          body: JSON.stringify({
-            session
-          })
+
+          body:
+            JSON.stringify({
+              session
+            })
         }
       );
 
 
-    const data =
-      await response.json();
+    let data;
 
 
-    if (!data.ok) {
+    try {
+
+      data =
+        await response.json();
+
+    } catch (_) {
+
+      data = {
+        ok: false,
+        error:
+          "Invalid server response."
+      };
+    }
+
+
+    if (
+      !response.ok ||
+      !data.ok
+    ) {
 
       showMessage(
         data.error ||
@@ -2391,19 +3320,21 @@ async function connectBot() {
 
 
     /*
-     * Clear session from the browser
-     * after successful submission.
+     * Clear session immediately after
+     * successful submission.
      */
-    document.getElementById(
-      "session"
-    ).value = "";
+
+    sessionInput.value =
+      "";
 
 
     showMessage(
-      "Bot connected."
+      "Bot connected successfully."
     );
 
-    refreshStatus();
+
+    await refreshStatus();
+
 
   } catch (error) {
 
@@ -2411,9 +3342,22 @@ async function connectBot() {
       "Connection error."
     );
 
+
+  } finally {
+
+    button.disabled =
+      false;
+
+
+    button.textContent =
+      "CONNECT";
   }
 }
 
+
+/* =========================================================
+   DISCONNECT
+========================================================= */
 
 async function disconnectBot() {
 
@@ -2423,7 +3367,14 @@ async function disconnectBot() {
       await fetch(
         "/api/disconnect",
         {
-          method: "POST"
+          method:
+            "POST",
+
+          credentials:
+            "same-origin",
+
+          cache:
+            "no-store"
         }
       );
 
@@ -2442,29 +3393,39 @@ async function disconnectBot() {
     );
 
 
-    refreshStatus();
+    await refreshStatus();
+
 
   } catch (error) {
 
     showMessage(
       "Disconnect error."
     );
-
   }
 }
 
+
+/* =========================================================
+   CLEAR
+========================================================= */
 
 function clearSession() {
 
   document.getElementById(
     "session"
-  ).value = "";
+  ).value =
+    "";
+
 
   showMessage(
     "Session field cleared."
   );
 }
 
+
+/* =========================================================
+   LOGOUT
+========================================================= */
 
 async function logout() {
 
@@ -2473,17 +3434,32 @@ async function logout() {
     await fetch(
       "/api/logout",
       {
-        method: "POST"
+        method:
+          "POST",
+
+        credentials:
+          "same-origin",
+
+        cache:
+          "no-store"
       }
     );
 
   } catch (_) {}
 
-  location.href = "/";
+
+  window.location.replace(
+    "/"
+  );
 }
 
 
+/* =========================================================
+   INITIAL STATUS
+========================================================= */
+
 refreshStatus();
+
 
 setInterval(
   refreshStatus,
@@ -2503,15 +3479,22 @@ setInterval(
 
 const server =
   http.createServer(
-    async (req, res) => {
+    async (
+      req,
+      res
+    ) => {
 
       try {
 
         const url =
           new URL(
             req.url,
-            `http://${req.headers.host || "localhost"}`
+            `http://${
+              req.headers.host ||
+              "localhost"
+            }`
           );
+
 
         const pathname =
           url.pathname;
@@ -2522,27 +3505,39 @@ const server =
         ========================================= */
 
         if (
-          pathname === "/api/login" &&
-          req.method === "POST"
+          pathname ===
+            "/api/login" &&
+          req.method ===
+            "POST"
         ) {
 
           const raw =
-            await readBody(req);
+            await readBody(
+              req
+            );
+
 
           let body;
 
+
           try {
+
             body =
-              JSON.parse(raw || "{}");
+              JSON.parse(
+                raw || "{}"
+              );
+
           } catch (_) {
 
             sendJSON(
               res,
               400,
               {
-                ok: false,
+                ok:
+                  false,
+
                 error:
-                  "Invalid JSON."
+                  "Invalid login request."
               }
             );
 
@@ -2552,12 +3547,15 @@ const server =
 
           const username =
             String(
-              body.username || ""
-            );
+              body.username ??
+              ""
+            ).trim();
+
 
           const password =
             String(
-              body.password || ""
+              body.password ??
+              ""
             );
 
 
@@ -2568,11 +3566,21 @@ const server =
               DASHBOARD_PASSWORD
           ) {
 
+            console.log(
+              `[DASHBOARD] failed login attempt for username: ${
+                username ||
+                "(empty)"
+              }`
+            );
+
+
             sendJSON(
               res,
               401,
               {
-                ok: false,
+                ok:
+                  false,
+
                 error:
                   "Invalid username or password."
               }
@@ -2586,40 +3594,80 @@ const server =
             createDashboardSession();
 
 
+          const isHTTPS =
+            req.headers[
+              "x-forwarded-proto"
+            ] ===
+              "https" ||
+            !!req.socket.encrypted;
+
+
+          const cookieParts = [
+            `dashboard_session=${encodeURIComponent(token)}`,
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            "Max-Age=86400"
+          ];
+
+
+          if (isHTTPS) {
+
+            cookieParts.push(
+              "Secure"
+            );
+          }
+
+
           res.writeHead(
             200,
             {
-              "content-type":
+              "Content-Type":
                 "application/json; charset=utf-8",
-              "cache-control":
+
+              "Cache-Control":
                 "no-store",
 
-              /*
-               * Secure becomes useful when deployed
-               * behind HTTPS, such as Railway.
-               */
-              "set-cookie":
-                `dashboard_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`
+              "Pragma":
+                "no-cache",
+
+              "Set-Cookie":
+                cookieParts.join(
+                  "; "
+                )
             }
           );
 
+
           res.end(
             JSON.stringify({
-              ok: true
+              ok:
+                true,
+
+              message:
+                "Login successful."
             })
           );
+
+
+          console.log(
+            "[DASHBOARD] Admin logged in successfully."
+          );
+
 
           return;
         }
 
 
         /* =========================================
-           LOGOUT API
+           LOGOUT
         ========================================= */
 
         if (
-          pathname === "/api/logout" &&
-          req.method === "POST"
+          pathname ===
+            "/api/logout" &&
+          req.method ===
+            "POST"
         ) {
 
           const token =
@@ -2627,6 +3675,7 @@ const server =
               req,
               "dashboard_session"
             );
+
 
           if (token) {
 
@@ -2639,20 +3688,25 @@ const server =
           res.writeHead(
             200,
             {
-              "content-type":
+              "Content-Type":
                 "application/json; charset=utf-8",
-              "set-cookie":
-                "dashboard_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-              "cache-control":
-                "no-store"
+
+              "Cache-Control":
+                "no-store",
+
+              "Set-Cookie":
+                "dashboard_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
             }
           );
 
+
           res.end(
             JSON.stringify({
-              ok: true
+              ok:
+                true
             })
           );
+
 
           return;
         }
@@ -2676,16 +3730,22 @@ const server =
             res.writeHead(
               200,
               {
-                "content-type":
+                "Content-Type":
                   "text/html; charset=utf-8",
-                "cache-control":
-                  "no-store"
+
+                "Cache-Control":
+                  "no-store",
+
+                "Pragma":
+                  "no-cache"
               }
             );
+
 
             res.end(
               dashboardLoginHTML()
             );
+
 
             return;
           }
@@ -2694,23 +3754,29 @@ const server =
           res.writeHead(
             200,
             {
-              "content-type":
+              "Content-Type":
                 "text/html; charset=utf-8",
-              "cache-control":
-                "no-store"
+
+              "Cache-Control":
+                "no-store",
+
+              "Pragma":
+                "no-cache"
             }
           );
+
 
           res.end(
             dashboardHTML()
           );
+
 
           return;
         }
 
 
         /* =========================================
-           AUTHENTICATED API
+           AUTHENTICATION FOR API
         ========================================= */
 
         if (
@@ -2729,11 +3795,14 @@ const server =
               res,
               401,
               {
-                ok: false,
+                ok:
+                  false,
+
                 error:
                   "Dashboard authentication required."
               }
             );
+
 
             return;
           }
@@ -2745,12 +3814,15 @@ const server =
         ========================================= */
 
         if (
-          pathname === "/api/status" &&
-          req.method === "GET"
+          pathname ===
+            "/api/status" &&
+          req.method ===
+            "GET"
         ) {
 
           const connected =
             !!api;
+
 
           const uptime =
             connected &&
@@ -2759,7 +3831,8 @@ const server =
                   (
                     Date.now() -
                     botConnectedAt
-                  ) / 1000
+                  ) /
+                  1000
                 )
               : 0;
 
@@ -2768,23 +3841,37 @@ const server =
             res,
             200,
             {
-              ok: true,
+              ok:
+                true,
+
               connected,
+
               connecting:
                 botConnecting,
+
               userID:
-                botUserID || "",
+                botUserID ||
+                "",
+
               uptime,
+
               messageCount,
+
               commandCount,
+
               activeThreads:
                 activeThreads.size,
+
               queueThreads:
                 threadQueues.size,
+
               logs:
-                dashboardLogs.slice(-80)
+                dashboardLogs.slice(
+                  -80
+                )
             }
           );
+
 
           return;
         }
@@ -2795,8 +3882,10 @@ const server =
         ========================================= */
 
         if (
-          pathname === "/api/connect" &&
-          req.method === "POST"
+          pathname ===
+            "/api/connect" &&
+          req.method ===
+            "POST"
         ) {
 
           if (api) {
@@ -2805,20 +3894,48 @@ const server =
               res,
               400,
               {
-                ok: false,
+                ok:
+                  false,
+
                 error:
                   "Bot is already connected. Disconnect first."
               }
             );
+
+
+            return;
+          }
+
+
+          if (
+            botConnecting
+          ) {
+
+            sendJSON(
+              res,
+              409,
+              {
+                ok:
+                  false,
+
+                error:
+                  "Bot is already connecting."
+              }
+            );
+
 
             return;
           }
 
 
           const raw =
-            await readBody(req);
+            await readBody(
+              req
+            );
+
 
           let body;
+
 
           try {
 
@@ -2833,11 +3950,14 @@ const server =
               res,
               400,
               {
-                ok: false,
+                ok:
+                  false,
+
                 error:
                   "Invalid JSON."
               }
             );
+
 
             return;
           }
@@ -2849,18 +3969,23 @@ const server =
 
           if (
             !session ||
-            !String(session).trim()
+            !String(
+              session
+            ).trim()
           ) {
 
             sendJSON(
               res,
               400,
               {
-                ok: false,
+                ok:
+                  false,
+
                 error:
                   "Session/C3C is required."
               }
             );
+
 
             return;
           }
@@ -2874,20 +3999,25 @@ const server =
 
 
             /*
-             * Do not include the submitted
-             * session in the response.
+             * Never return session data.
              */
 
             sendJSON(
               res,
               200,
               {
-                ok: true,
-                connected: true,
+                ok:
+                  true,
+
+                connected:
+                  true,
+
                 userID:
-                  botUserID || ""
+                  botUserID ||
+                  ""
               }
             );
+
 
           } catch (error) {
 
@@ -2895,13 +4025,16 @@ const server =
               res,
               500,
               {
-                ok: false,
+                ok:
+                  false,
+
                 error:
                   error?.message ||
                   "Facebook login failed."
               }
             );
           }
+
 
           return;
         }
@@ -2912,8 +4045,10 @@ const server =
         ========================================= */
 
         if (
-          pathname === "/api/disconnect" &&
-          req.method === "POST"
+          pathname ===
+            "/api/disconnect" &&
+          req.method ===
+            "POST"
         ) {
 
           const disconnected =
@@ -2924,10 +4059,44 @@ const server =
             res,
             200,
             {
-              ok: true,
+              ok:
+                true,
+
               disconnected
             }
           );
+
+
+          return;
+        }
+
+
+        /* =========================================
+           HEALTH CHECK
+        ========================================= */
+
+        if (
+          pathname ===
+            "/health"
+        ) {
+
+          sendJSON(
+            res,
+            200,
+            {
+              ok:
+                true,
+
+              dashboard:
+                "online",
+
+              bot:
+                !!api
+                  ? "connected"
+                  : "disconnected"
+            }
+          );
+
 
           return;
         }
@@ -2941,11 +4110,14 @@ const server =
           res,
           404,
           {
-            ok: false,
+            ok:
+              false,
+
             error:
               "Not found."
           }
         );
+
 
       } catch (error) {
 
@@ -2954,16 +4126,24 @@ const server =
           error
         );
 
-        sendJSON(
-          res,
-          500,
-          {
-            ok: false,
-            error:
-              error?.message ||
-              "Internal server error."
-          }
-        );
+
+        if (
+          !res.headersSent
+        ) {
+
+          sendJSON(
+            res,
+            500,
+            {
+              ok:
+                false,
+
+              error:
+                error?.message ||
+                "Internal server error."
+            }
+          );
+        }
       }
     }
   );
@@ -2975,6 +4155,7 @@ const server =
 
 server.listen(
   PORT,
+  "0.0.0.0",
   () => {
 
     console.log(
@@ -2993,12 +4174,14 @@ server.listen(
 
 
 /* =========================================================
-   OPTIONAL ENV SESSION AUTO-LOGIN
+   OPTIONAL ENV / FILE SESSION AUTO LOGIN
 ========================================================= */
 
-if (
-  process.env.FB_COOKIES ||
-  process.env.FB_APPSTATE ||
+const hasSavedSession =
+  !!(
+    process.env.FB_COOKIES ||
+    process.env.FB_APPSTATE
+  ) ||
   fs.existsSync(
     path.join(
       process.cwd(),
@@ -3010,29 +4193,42 @@ if (
       process.cwd(),
       "cookies.json"
     )
-  )
-) {
+  );
+
+
+if (hasSavedSession) {
 
   console.log(
     "[BANAT] saved session detected; attempting automatic login..."
   );
+
 
   try {
 
     const savedSession =
       readSession();
 
+
     connectBotWithSession(
       savedSession
-    ).catch(error => {
+    )
+      .then(() => {
 
-      console.error(
-        "[BANAT] automatic login failed:",
-        error?.message ||
-          error
-      );
+        console.log(
+          "[BANAT] automatic login successful."
+        );
 
-    });
+      })
+      .catch(error => {
+
+        console.error(
+          "[BANAT] automatic login failed:",
+          error?.message ||
+            error
+        );
+
+      });
+
 
   } catch (error) {
 
