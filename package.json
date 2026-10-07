@@ -1,7 +1,7 @@
 {
   "name": "banat-messenger-dashboard",
   "version": "1.0.0",
-  "description": "Banat Messenger Bot with Embedded Web Dashboard",
+  "description": "Banat Messenger Bot with Embedded Dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
