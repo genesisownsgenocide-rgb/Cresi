@@ -1,23 +1,40 @@
 "use strict";
 
 /*
- * BANAT-ONLY MESSENGER BOT + DASHBOARD
- * ------------------------------------
- * Existing BANAT logic preserved.
+ * BANAT MESSENGER BOT + DASHBOARD
+ * --------------------------------
  *
  * Dashboard:
+ *   /
+ *   /dashboard
+ *
+ * Dashboard login:
  *   Username: admin
  *   Password: halimaw123
  *
- * Messenger:
- *   Paste AppState / C3C in dashboard.
+ * Messenger commands:
+ *   !banat on
+ *   !banat off
+ *   !banat toggle
+ *   !banat status
+ *   !banat help
+ *
+ * Other modules:
+ *   setallnick.js
+ *   gcname-lock.js
+ *
+ * Facebook session:
+ *   Dashboard -> C3C / AppState
+ *
+ * IMPORTANT:
+ *   This version uses the old ws3-fca cookie-string login style.
  */
 
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+const crypto = require("crypto");
 const express = require("express");
-const session = require("express-session");
 const { login } = require("ws3-fca");
 
 const {
@@ -35,7 +52,18 @@ const {
   isBanatConversationModeActive
 } = require("./banat-targeting");
 
+const gcnameLock = require("./gcname-lock");
+const setallnick = require("./setallnick");
+
+
+// ============================================================
+// CONFIG
+// ============================================================
+
 const PORT = Number(process.env.PORT || 10000);
+
+const DASHBOARD_USERNAME = "admin";
+const DASHBOARD_PASSWORD = "halimaw123";
 
 const DEFAULT_ON =
   /^(1|true|yes|on)$/i.test(
@@ -44,130 +72,111 @@ const DEFAULT_ON =
 
 const GLOBAL_SEND_LIMIT = Math.max(
   1,
-  Number(
-    process.env.BANAT_GLOBAL_SEND_LIMIT || 2
-  )
+  Number(process.env.BANAT_GLOBAL_SEND_LIMIT || 2)
 );
 
 const THREAD_COOLDOWN_MS = Math.max(
   0,
-  Number(
-    process.env.BANAT_THREAD_COOLDOWN_MS || 12000
-  )
+  Number(process.env.BANAT_THREAD_COOLDOWN_MS || 12000)
 );
 
-const RETRY_DELAYS = [
-  1500,
-  4000,
-  8000
-];
-
-/* =========================================================
-   DASHBOARD SETTINGS
-========================================================= */
-
-const DASHBOARD_USERNAME = "admin";
-const DASHBOARD_PASSWORD = "halimaw123";
+const RETRY_DELAYS = [1500, 4000, 8000];
 
 const SESSION_FILE = path.join(
   process.cwd(),
   "appstate.json"
 );
 
-/* =========================================================
-   BANAT STATE
-========================================================= */
 
-const activeThreads = new Set();
-const threadQueues = new Map();
-const threadLastSent = new Map();
-const threadCooldown = new Map();
+// ============================================================
+// EXPRESS
+// ============================================================
 
-let globalActive = 0;
+const app = express();
+
+app.use(express.json({
+  limit: "10mb"
+}));
+
+app.use(express.urlencoded({
+  extended: true,
+  limit: "10mb"
+}));
+
+
+// ============================================================
+// BOT STATE
+// ============================================================
+
+let api = null;
 let botUserID = "";
-let botName = "Unknown";
+let botName = "";
+
 let botOnline = false;
-let botStartedAt = null;
-let lastError = null;
+let botLoggingIn = false;
 
 let totalMessages = 0;
 let totalReplies = 0;
 let totalErrors = 0;
 
-const logs = [];
+let lastError = "";
+let lastLoginTime = null;
+let lastMessageTime = null;
 
-/* =========================================================
-   EXPRESS
-========================================================= */
+const activeThreads = new Set();
 
-const app = express();
+const threadQueues = new Map();
+const threadLastSent = new Map();
+const threadCooldown = new Map();
 
-app.use(
-  express.json({
-    limit: "10mb"
-  })
-);
+let globalActive = 0;
 
-app.use(
-  express.urlencoded({
-    extended: true,
-    limit: "10mb"
-  })
-);
 
-app.use(
-  session({
-    secret:
-      process.env.DASHBOARD_SESSION_SECRET ||
-      "sanzu-dashboard-session-secret",
+// ============================================================
+// DASHBOARD AUTH
+// ============================================================
 
-    resave: false,
+const dashboardTokens = new Set();
 
-    saveUninitialized: false,
+function createDashboardToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
 
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 24 * 60 * 60 * 1000
-    }
-  })
-);
+function isDashboardAuthenticated(req) {
+  const token =
+    req.headers["x-dashboard-token"] ||
+    req.query.token;
 
-/* =========================================================
-   LOGGING
-========================================================= */
+  return Boolean(
+    token &&
+    dashboardTokens.has(String(token))
+  );
+}
 
-function addLog(type, message) {
-  const item = {
-    time: new Date().toISOString(),
-    type,
-    message: String(message || "")
-  };
-
-  logs.unshift(item);
-
-  if (logs.length > 200) {
-    logs.length = 200;
+function requireDashboard(req, res, next) {
+  if (!isDashboardAuthenticated(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized"
+    });
   }
 
-  console.log(
-    `[${type}] ${message}`
-  );
+  next();
 }
 
-/* =========================================================
-   SLEEP
-========================================================= */
+
+// ============================================================
+// HELPERS
+// ============================================================
 
 function sleep(ms) {
-  return new Promise(
-    resolve => setTimeout(resolve, ms)
-  );
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/* =========================================================
-   SESSION READER
-========================================================= */
+
+// ============================================================
+// SESSION READER
+// ============================================================
 
 function readSession() {
   const raw =
@@ -175,8 +184,7 @@ function readSession() {
     process.env.FB_APPSTATE;
 
   if (raw) {
-    const trimmed =
-      String(raw).trim();
+    const trimmed = String(raw).trim();
 
     try {
       return JSON.parse(trimmed);
@@ -185,21 +193,28 @@ function readSession() {
     }
   }
 
-  for (
-    const file of [
-      "appstate.json",
-      "cookies.json"
-    ]
-  ) {
-    const filePath =
-      path.join(
-        process.cwd(),
-        file
+  if (fs.existsSync(SESSION_FILE)) {
+    try {
+      return JSON.parse(
+        fs.readFileSync(SESSION_FILE, "utf8")
       );
+    } catch (_) {
+      return fs.readFileSync(
+        SESSION_FILE,
+        "utf8"
+      );
+    }
+  }
 
-    if (
-      fs.existsSync(filePath)
-    ) {
+  for (const file of [
+    "cookies.json"
+  ]) {
+    const filePath = path.join(
+      process.cwd(),
+      file
+    );
+
+    if (fs.existsSync(filePath)) {
       return JSON.parse(
         fs.readFileSync(
           filePath,
@@ -210,27 +225,24 @@ function readSession() {
   }
 
   throw new Error(
-    "No Facebook session found. Paste AppState in the dashboard or set FB_COOKIES/FB_APPSTATE."
+    "No Facebook session found."
   );
 }
 
-/* =========================================================
-   NORMALIZE FACEBOOK SESSION
-========================================================= */
+
+// ============================================================
+// NORMALIZE APPSTATE / C3C
+// ============================================================
 
 function normalizeSession(value) {
+
   /*
-   * IMPORTANT:
-   * This bot uses cookie STRING format
-   * because the installed ws3-fca build
-   * expects the session as a string.
+   * Already a cookie string
    */
 
-  if (
-    typeof value === "string"
-  ) {
-    const cookie =
-      value.trim();
+  if (typeof value === "string") {
+
+    const cookie = value.trim();
 
     if (!cookie) {
       throw new Error(
@@ -239,31 +251,31 @@ function normalizeSession(value) {
     }
 
     /*
-     * If dashboard supplied JSON
-     * as a string, parse it.
+     * If dashboard sends JSON as string,
+     * parse it first.
      */
 
-    try {
-      const parsed =
-        JSON.parse(cookie);
-
-      if (
-        Array.isArray(parsed) ||
-        Array.isArray(parsed?.appState) ||
-        Array.isArray(parsed?.cookies)
-      ) {
+    if (
+      cookie.startsWith("[") ||
+      cookie.startsWith("{")
+    ) {
+      try {
         return normalizeSession(
-          parsed
+          JSON.parse(cookie)
         );
+      } catch (_) {
+        // Not valid JSON.
+        // Continue treating it as cookie string.
       }
-    } catch (_) {
-      /*
-       * Normal cookie string.
-       */
     }
 
     return cookie;
   }
+
+
+  /*
+   * Standard AppState array
+   */
 
   const entries =
     Array.isArray(value)
@@ -276,34 +288,34 @@ function normalizeSession(value) {
 
   if (!entries) {
     throw new Error(
-      "Facebook session must be a cookie string or a JSON array of cookie/AppState entries."
+      "Facebook session must be a cookie string or JSON AppState array."
     );
   }
 
-  const parts =
-    entries
-      .map(cookie => {
-        const key =
-          cookie?.key ??
-          cookie?.name;
+  const parts = entries
+    .map(cookie => {
 
-        const val =
-          cookie?.value;
+      const key =
+        cookie?.key ??
+        cookie?.name;
 
-        if (
-          key == null ||
-          val == null
-        ) {
-          return null;
-        }
+      const val =
+        cookie?.value;
 
-        return (
-          String(key).trim() +
-          "=" +
-          String(val)
-        );
-      })
-      .filter(Boolean);
+      if (
+        key == null ||
+        val == null
+      ) {
+        return null;
+      }
+
+      return (
+        String(key).trim() +
+        "=" +
+        String(val)
+      );
+    })
+    .filter(Boolean);
 
   if (!parts.length) {
     throw new Error(
@@ -314,87 +326,38 @@ function normalizeSession(value) {
   return parts.join("; ");
 }
 
-/* =========================================================
-   SAVE SESSION
-========================================================= */
 
-function saveSession(value) {
-  try {
-    const cookie =
-      normalizeSession(value);
+// ============================================================
+// SAVE SESSION
+// ============================================================
 
-    /*
-     * Save as string because this
-     * version of ws3-fca expects
-     * cookie-string login.
-     */
+function saveSession(cookieString) {
 
-    fs.writeFileSync(
-      SESSION_FILE,
-      JSON.stringify(
-        cookie,
-        null,
-        2
-      ),
-      "utf8"
-    );
+  fs.writeFileSync(
+    SESSION_FILE,
+    JSON.stringify(
+      {
+        cookies: cookieString
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
 
-    return true;
-  } catch (error) {
-    addLog(
-      "SESSION_ERROR",
-      error.message
-    );
-
-    return false;
-  }
+  console.log(
+    "[BANAT] Facebook session saved."
+  );
 }
 
-/* =========================================================
-   LOAD SAVED SESSION
-========================================================= */
 
-function getSavedSession() {
-  try {
-    if (
-      !fs.existsSync(
-        SESSION_FILE
-      )
-    ) {
-      return null;
-    }
+// ============================================================
+// TRAFFIC QUEUE
+// ============================================================
 
-    const raw =
-      fs.readFileSync(
-        SESSION_FILE,
-        "utf8"
-      );
+function enqueue(threadID, job) {
 
-    if (!raw.trim()) {
-      return null;
-    }
-
-    return JSON.parse(raw);
-  } catch (error) {
-    addLog(
-      "SESSION_ERROR",
-      `Saved AppState could not be loaded: ${error.message}`
-    );
-
-    return null;
-  }
-}
-
-/* =========================================================
-   ENQUEUE
-========================================================= */
-
-function enqueue(
-  threadID,
-  job
-) {
-  const key =
-    String(threadID);
+  const key = String(threadID);
 
   const current =
     threadQueues.get(key) ||
@@ -405,14 +368,13 @@ function enqueue(
       .catch(() => {})
       .then(job)
       .finally(() => {
+
         if (
-          threadQueues.get(key) ===
-          next
+          threadQueues.get(key) === next
         ) {
-          threadQueues.delete(
-            key
-          );
+          threadQueues.delete(key);
         }
+
       });
 
   threadQueues.set(
@@ -423,14 +385,15 @@ function enqueue(
   return next;
 }
 
-/* =========================================================
-   GLOBAL SLOT
-========================================================= */
+
+// ============================================================
+// GLOBAL SEND LIMIT
+// ============================================================
 
 async function acquireGlobalSlot() {
+
   while (
-    globalActive >=
-    GLOBAL_SEND_LIMIT
+    globalActive >= GLOBAL_SEND_LIMIT
   ) {
     await sleep(150);
   }
@@ -438,7 +401,9 @@ async function acquireGlobalSlot() {
   globalActive++;
 }
 
+
 function releaseGlobalSlot() {
+
   globalActive =
     Math.max(
       0,
@@ -446,52 +411,54 @@ function releaseGlobalSlot() {
     );
 }
 
-/* =========================================================
-   FACEBOOK ERROR
-========================================================= */
+
+// ============================================================
+// FACEBOOK ERROR CHECK
+// ============================================================
 
 function is1545012(error) {
+
   const text =
     JSON.stringify(
       error || ""
     );
 
-  return /1545012|temporarily unavailable|message could not be sent/i.test(
-    text
-  );
+  return /1545012|temporarily unavailable|message could not be sent/i
+    .test(text);
 }
 
-/* =========================================================
-   TRAFFIC SEND
-========================================================= */
+
+// ============================================================
+// TRAFFIC SEND MESSAGE
+// ============================================================
 
 function trafficSendMessage(
-  api,
+  messengerApi,
   message,
   threadID,
   callback,
   replyToMessageID = null
 ) {
+
   const key =
     String(threadID);
 
   return enqueue(
     key,
     async () => {
+
       const now =
         Date.now();
 
       const cooldownUntil =
         Number(
-          threadCooldown.get(
-            key
-          ) || 0
+          threadCooldown.get(key) || 0
         );
 
       if (
-        cooldownUntil >
-        now
+        cooldownUntil > now
       ) {
+
         callback(
           new Error(
             `thread cooldown active for ${cooldownUntil - now}ms`
@@ -504,82 +471,83 @@ function trafficSendMessage(
       const sinceLast =
         now -
         Number(
-          threadLastSent.get(
-            key
-          ) || 0
+          threadLastSent.get(key) || 0
         );
 
       if (
         sinceLast <
         THREAD_COOLDOWN_MS
       ) {
+
         await sleep(
           THREAD_COOLDOWN_MS -
           sinceLast
         );
+
       }
 
       await acquireGlobalSlot();
 
       try {
-        let lastError =
-          null;
+
+        let lastError = null;
 
         for (
           let attempt = 0;
-          attempt <=
-          RETRY_DELAYS.length;
+          attempt <= RETRY_DELAYS.length;
           attempt++
         ) {
+
           try {
+
             const result =
               await new Promise(
-                (
-                  resolve,
-                  reject
-                ) => {
-                  let settled =
-                    false;
+                (resolve, reject) => {
+
+                  let settled = false;
 
                   const done =
-                    (
-                      err,
-                      info
-                    ) => {
-                      if (
-                        settled
-                      ) {
+                    (err, info) => {
+
+                      if (settled) {
                         return;
                       }
 
-                      settled =
-                        true;
+                      settled = true;
 
-                      err
-                        ? reject(err)
-                        : resolve(info);
+                      if (err) {
+                        reject(err);
+                      } else {
+                        resolve(info);
+                      }
+
                     };
 
                   try {
+
                     let returned;
 
                     if (
                       replyToMessageID
                     ) {
+
                       returned =
-                        api.sendMessage(
+                        messengerApi.sendMessage(
                           message,
                           threadID,
                           done,
                           replyToMessageID
                         );
+
                     } else {
+
                       returned =
-                        api.sendMessage(
+                        messengerApi.sendMessage(
                           message,
                           threadID,
                           done
                         );
+
                     }
 
                     if (
@@ -587,21 +555,19 @@ function trafficSendMessage(
                       typeof returned.then ===
                         "function"
                     ) {
+
                       returned
-                        .then(
-                          info =>
-                            done(
-                              null,
-                              info
-                            )
+                        .then(info =>
+                          done(null, info)
                         )
-                        .catch(
-                          done
-                        );
+                        .catch(done);
+
                     }
+
                   } catch (e) {
                     reject(e);
                   }
+
                 }
               );
 
@@ -610,24 +576,20 @@ function trafficSendMessage(
               Date.now()
             );
 
-            totalReplies++;
-
             callback(
               null,
               result
             );
 
             return;
+
           } catch (error) {
+
             lastError =
               error;
 
-            totalErrors++;
-
             if (
-              !is1545012(
-                error
-              ) ||
+              !is1545012(error) ||
               attempt >=
                 RETRY_DELAYS.length
             ) {
@@ -637,18 +599,14 @@ function trafficSendMessage(
             threadCooldown.set(
               key,
               Date.now() +
-                Math.min(
-                  15000,
-                  RETRY_DELAYS[
-                    attempt
-                  ]
-                )
+              Math.min(
+                15000,
+                RETRY_DELAYS[attempt]
+              )
             );
 
             await sleep(
-              RETRY_DELAYS[
-                attempt
-              ]
+              RETRY_DELAYS[attempt]
             );
 
             threadCooldown.delete(
@@ -658,60 +616,51 @@ function trafficSendMessage(
         }
 
         if (
-          is1545012(
-            lastError
-          )
+          is1545012(lastError)
         ) {
+
           threadCooldown.set(
             key,
             Date.now() +
-              5 * 60 * 1000
+            5 * 60 * 1000
           );
+
         }
 
         callback(
           lastError
         );
+
       } finally {
+
         releaseGlobalSlot();
+
       }
+
     }
   );
 }
 
-/* =========================================================
-   BANAT COMMAND
-========================================================= */
 
-function isBanatCommand(body) {
-  return /^!banat(?:\s|$)/i.test(
-    String(body || "").trim()
-  );
-}
-
-/* =========================================================
-   COMMAND SEND
-========================================================= */
+// ============================================================
+// COMMAND SEND
+// ============================================================
 
 function commandSendMessage(
-  api,
+  messengerApi,
   message,
   threadID,
   replyToMessageID = null
 ) {
+
   return new Promise(
-    (
-      resolve,
-      reject
-    ) => {
-      let settled =
-        false;
+    (resolve, reject) => {
+
+      let settled = false;
 
       const done =
-        (
-          err,
-          info
-        ) => {
+        (err, info) => {
+
           if (settled) {
             return;
           }
@@ -723,18 +672,20 @@ function commandSendMessage(
           } else {
             resolve(info);
           }
+
         };
 
       try {
+
         const returned =
           replyToMessageID
-            ? api.sendMessage(
+            ? messengerApi.sendMessage(
                 message,
                 threadID,
                 done,
                 replyToMessageID
               )
-            : api.sendMessage(
+            : messengerApi.sendMessage(
                 message,
                 threadID,
                 done
@@ -745,65 +696,85 @@ function commandSendMessage(
           typeof returned.then ===
             "function"
         ) {
+
           returned
-            .then(
-              info =>
-                done(
-                  null,
-                  info
-                )
+            .then(info =>
+              done(null, info)
             )
             .catch(done);
+
         }
+
       } catch (error) {
+
         done(error);
+
       }
+
     }
   );
 }
 
-/* =========================================================
-   COMMAND REPLY
-========================================================= */
 
 function sendCommandReply(
-  api,
+  messengerApi,
   event,
   message
 ) {
+
   const threadID =
     String(event.threadID);
 
   commandSendMessage(
-    api,
+    messengerApi,
     message,
     threadID,
-    event.messageID ||
-      null
+    event.messageID || null
   )
-    .then(() =>
+    .then(() => {
+
+      totalReplies++;
+
       console.log(
         `[BANAT] command reply sent: ${message}`
-      )
-    )
-    .catch(error =>
+      );
+
+    })
+    .catch(error => {
+
+      totalErrors++;
+
+      lastError =
+        error?.message ||
+        String(error);
+
       console.error(
         "[BANAT] command reply failed:",
-        error?.message ||
-          error
-      )
-    );
+        lastError
+      );
+
+    });
 }
 
-/* =========================================================
-   BANAT COMMAND HANDLER
-========================================================= */
+
+// ============================================================
+// BANAT COMMAND
+// ============================================================
+
+function isBanatCommand(body) {
+
+  return /^!banat(?:\s|$)/i.test(
+    String(body || "").trim()
+  );
+}
+
 
 function handleBanatCommand(
-  api,
+  messengerApi,
   event,
   body
 ) {
+
   const threadID =
     String(event.threadID);
 
@@ -818,11 +789,13 @@ function handleBanatCommand(
       "status"
     ).toLowerCase();
 
+
   if (
     sub === "on" ||
     sub === "enable" ||
     sub === "start"
   ) {
+
     setBanatConversationMode(
       threadID,
       true,
@@ -838,7 +811,7 @@ function handleBanatCommand(
     );
 
     sendCommandReply(
-      api,
+      messengerApi,
       event,
       "banat is on. say whatever u want 😭"
     );
@@ -846,11 +819,13 @@ function handleBanatCommand(
     return true;
   }
 
+
   if (
     sub === "off" ||
     sub === "disable" ||
     sub === "stop"
   ) {
+
     setBanatConversationMode(
       threadID,
       false
@@ -865,7 +840,7 @@ function handleBanatCommand(
     );
 
     sendCommandReply(
-      api,
+      messengerApi,
       event,
       "banat off. peace 😭"
     );
@@ -873,9 +848,11 @@ function handleBanatCommand(
     return true;
   }
 
+
   if (
     sub === "toggle"
   ) {
+
     const next =
       !isBanatConversationModeActive(
         threadID
@@ -898,11 +875,13 @@ function handleBanatCommand(
     }
 
     console.log(
-      `[BANAT] toggled thread ${threadID}: ${next ? "ON" : "OFF"}`
+      `[BANAT] toggled thread ${threadID}: ${
+        next ? "ON" : "OFF"
+      }`
     );
 
     sendCommandReply(
-      api,
+      messengerApi,
       event,
       next
         ? "banat is on 😭"
@@ -912,9 +891,11 @@ function handleBanatCommand(
     return true;
   }
 
+
   if (
     sub === "status"
   ) {
+
     const on =
       activeThreads.has(
         threadID
@@ -924,7 +905,7 @@ function handleBanatCommand(
       );
 
     sendCommandReply(
-      api,
+      messengerApi,
       event,
       on
         ? "banat: ON 🟢"
@@ -934,11 +915,13 @@ function handleBanatCommand(
     return true;
   }
 
+
   if (
     sub === "help"
   ) {
+
     sendCommandReply(
-      api,
+      messengerApi,
       event,
       "!banat on · !banat off · !banat toggle · !banat status"
     );
@@ -946,8 +929,9 @@ function handleBanatCommand(
     return true;
   }
 
+
   sendCommandReply(
-    api,
+    messengerApi,
     event,
     "unknown banat command. use !banat help"
   );
@@ -955,39 +939,41 @@ function handleBanatCommand(
   return true;
 }
 
-/* =========================================================
-   SEND BANAT
-========================================================= */
+
+// ============================================================
+// BANAT REPLY
+// ============================================================
 
 async function sendBanat(
-  api,
+  messengerApi,
   event,
   text
 ) {
+
   return sendBanatReplyWithTyping(
-    api,
+    messengerApi,
     text,
-    String(
-      event.threadID
-    ),
-    event.messageID ||
-      null,
+    String(event.threadID),
+    event.messageID || null,
     {
       trafficSendMessage,
+
       incomingText:
         event.body || ""
     }
   );
 }
 
-/* =========================================================
-   MESSAGE HANDLER
-========================================================= */
+
+// ============================================================
+// MESSAGE HANDLER
+// ============================================================
 
 function onMessage(
-  api,
+  messengerApi,
   event
 ) {
+
   if (!event) {
     return;
   }
@@ -1002,9 +988,7 @@ function onMessage(
   if (
     event.senderID &&
     botUserID &&
-    String(
-      event.senderID
-    ) ===
+    String(event.senderID) ===
       String(botUserID)
   ) {
     return;
@@ -1020,12 +1004,150 @@ function onMessage(
   }
 
   totalMessages++;
+  lastMessageTime =
+    new Date().toISOString();
+
+
+  // ==========================================================
+  // SET ALL NICK COMMANDS
+  // ==========================================================
+
+  try {
+
+    if (
+      setallnick &&
+      typeof setallnick.handleCommand ===
+        "function"
+    ) {
+
+      if (
+        setallnick.handleCommand(
+          messengerApi,
+          event,
+          body
+        )
+      ) {
+        return;
+      }
+
+    }
+
+  } catch (error) {
+
+    totalErrors++;
+
+    console.error(
+      "[SETALLNICK] command error:",
+      error
+    );
+
+  }
+
+
+  // ==========================================================
+  // GC NAME LOCK COMMANDS
+  // ==========================================================
+
+  try {
+
+    if (
+      gcnameLock &&
+      typeof gcnameLock.handleCommand ===
+        "function"
+    ) {
+
+      if (
+        gcnameLock.handleCommand(
+          messengerApi,
+          event,
+          body
+        )
+      ) {
+        return;
+      }
+
+    }
+
+  } catch (error) {
+
+    totalErrors++;
+
+    console.error(
+      "[GCNAME] command error:",
+      error
+    );
+
+  }
+
+
+  // ==========================================================
+  // NICKNAME PROTECTION
+  // ==========================================================
+
+  try {
+
+    if (
+      setallnick &&
+      typeof setallnick.protectNickname ===
+        "function"
+    ) {
+
+      setallnick.protectNickname(
+        messengerApi,
+        event
+      );
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      "[SETALLNICK] protection error:",
+      error
+    );
+
+  }
+
+
+  // ==========================================================
+  // GC NAME PROTECTION
+  // ==========================================================
+
+  try {
+
+    if (
+      gcnameLock &&
+      typeof gcnameLock.protectGCName ===
+        "function"
+    ) {
+
+      gcnameLock.protectGCName(
+        messengerApi,
+        event
+      );
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      "[GCNAME] protection error:",
+      error
+    );
+
+  }
+
+
+  // ==========================================================
+  // BANAT COMMAND
+  // ==========================================================
 
   if (
     isBanatCommand(body)
   ) {
+
     handleBanatCommand(
-      api,
+      messengerApi,
       event,
       body
     );
@@ -1033,10 +1155,13 @@ function onMessage(
     return;
   }
 
+
+  // ==========================================================
+  // BANAT NORMAL MESSAGE
+  // ==========================================================
+
   const threadID =
-    String(
-      event.threadID
-    );
+    String(event.threadID);
 
   const active =
     activeThreads.has(
@@ -1050,11 +1175,12 @@ function onMessage(
     classifyBanatTarget({
       event,
       body,
-      botID:
-        botUserID
+      botID: botUserID
     });
 
+
   if (active) {
+
     console.log(
       `[BANAT] active message in ${threadID} from ${event.senderID || "unknown"}`
     );
@@ -1070,28 +1196,50 @@ function onMessage(
       );
 
     if (reply) {
+
       sendBanat(
-        api,
+        messengerApi,
         event,
         reply
-      ).catch(error =>
-        console.error(
-          "[BANAT] reply error:",
-          error
-        )
-      );
+      )
+        .then(() => {
+          totalReplies++;
+        })
+        .catch(error => {
+
+          totalErrors++;
+
+          lastError =
+            error?.message ||
+            String(error);
+
+          console.error(
+            "[BANAT] reply error:",
+            lastError
+          );
+
+        });
+
     } else {
+
       console.warn(
         `[BANAT] no reply generated for active message in ${threadID}`
       );
+
     }
 
     return;
   }
 
+
+  // ==========================================================
+  // TARGETED BANAT
+  // ==========================================================
+
   if (
     target.shouldRespond
   ) {
+
     const reply =
       getTriggerReply(
         body,
@@ -1103,172 +1251,163 @@ function onMessage(
       );
 
     if (reply) {
+
       sendBanat(
-        api,
+        messengerApi,
         event,
         reply
-      ).catch(error =>
-        console.error(
-          "[BANAT]",
-          error
-        )
-      );
-    }
-  }
-}
+      )
+        .then(() => {
+          totalReplies++;
+        })
+        .catch(error => {
 
-/* =========================================================
-   GET BOT ACCOUNT INFO
-========================================================= */
+          totalErrors++;
 
-function getBotAccountInfo(
-  api
-) {
-  return new Promise(
-    resolve => {
-      try {
-        const uid =
-          String(
-            api.getCurrentUserID?.() ||
-              ""
+          lastError =
+            error?.message ||
+            String(error);
+
+          console.error(
+            "[BANAT]",
+            lastError
           );
 
-        if (!uid) {
-          resolve({
-            uid: "",
-            name: "Unknown"
-          });
-
-          return;
-        }
-
-        if (
-          typeof api.getUserInfo !==
-          "function"
-        ) {
-          resolve({
-            uid,
-            name: "Messenger Bot"
-          });
-
-          return;
-        }
-
-        api.getUserInfo(
-          uid,
-          (
-            error,
-            info
-          ) => {
-            if (
-              error ||
-              !info
-            ) {
-              resolve({
-                uid,
-                name: "Messenger Bot"
-              });
-
-              return;
-            }
-
-            resolve({
-              uid,
-              name:
-                info[uid]?.name ||
-                info[uid]
-                  ?.firstName ||
-                "Messenger Bot"
-            });
-          }
-        );
-      } catch (_) {
-        resolve({
-          uid: "",
-          name: "Unknown"
         });
-      }
+
     }
-  );
+
+  }
+
 }
 
-/* =========================================================
-   START BOT
-========================================================= */
 
-function start(
-  api
-) {
+// ============================================================
+// GET BOT NAME
+// ============================================================
+
+function updateBotInfo() {
+
+  if (!api) {
+    return;
+  }
+
   try {
+
     botUserID =
       String(
         api.getCurrentUserID?.() ||
-          ""
+        ""
       );
-  } catch (_) {
-    botUserID = "";
-  }
 
-  botOnline = true;
-  botStartedAt =
-    Date.now();
-  lastError = null;
+  } catch (_) {}
 
-  getBotAccountInfo(
-    api
-  ).then(info => {
-    botUserID =
-      info.uid ||
-      botUserID;
-
-    botName =
-      info.name ||
-      "Messenger Bot";
-
-    addLog(
-      "ONLINE",
-      `${botName} (${botUserID || "unknown"})`
-    );
-  });
 
   if (
-    DEFAULT_ON
+    !botUserID
   ) {
+    return;
+  }
+
+
+  if (
+    typeof api.getUserInfo ===
+    "function"
+  ) {
+
+    api.getUserInfo(
+      [botUserID],
+      (error, info) => {
+
+        if (
+          error ||
+          !info ||
+          !info[botUserID]
+        ) {
+          return;
+        }
+
+        botName =
+          info[botUserID].name ||
+          "";
+
+        console.log(
+          `[BANAT] account: ${botName} (${botUserID})`
+        );
+
+      }
+    );
+
+  }
+
+}
+
+
+// ============================================================
+// START BOT
+// ============================================================
+
+function start(
+  messengerApi
+) {
+
+  /*
+   * IMPORTANT:
+   * This assigns the module-level api variable.
+   * This fixes "api is not defined".
+   */
+
+  api = messengerApi;
+
+  botOnline = true;
+  botLoggingIn = false;
+
+  lastLoginTime =
+    new Date().toISOString();
+
+  lastError = "";
+
+  updateBotInfo();
+
+
+  if (DEFAULT_ON) {
+
     console.log(
       "[BANAT] BANAT_DEFAULT_ON enabled."
     );
+
   }
 
+
   api.listenMqtt(
-    (
-      error,
-      event
-    ) => {
+    (error, event) => {
+
       if (error) {
-        botOnline = false;
+
+        totalErrors++;
 
         lastError =
           error?.message ||
           String(error);
 
-        addLog(
-          "LISTENER_ERROR",
-          lastError
+        console.error(
+          "[BANAT] listener error:",
+          error
         );
 
         return;
       }
 
       try {
+
         if (
           DEFAULT_ON &&
           event?.threadID &&
           event?.senderID &&
-          String(
-            event.senderID
-          ) !==
-            String(botUserID)
+          String(event.senderID) !==
+            botUserID
         ) {
+
           const key =
             String(
               event.threadID
@@ -1279,6 +1418,7 @@ function start(
               key
             )
           ) {
+
             activeThreads.add(
               key
             );
@@ -1288,14 +1428,18 @@ function start(
               true,
               event.senderID
             );
+
           }
+
         }
 
         onMessage(
           api,
           event
         );
+
       } catch (e) {
+
         totalErrors++;
 
         lastError =
@@ -1306,184 +1450,289 @@ function start(
           "[BANAT] message handler error:",
           e
         );
+
       }
+
     }
+  );
+
+
+  console.log(
+    `[BANAT] online${
+      botUserID
+        ? ` as ${botUserID}`
+        : ""
+    }`
+  );
+
+}
+
+
+// ============================================================
+// LOGIN BOT
+// ============================================================
+
+function loginBot(
+  suppliedSession = null
+) {
+
+  if (botLoggingIn) {
+
+    throw new Error(
+      "Facebook login is already in progress."
+    );
+
+  }
+
+  botLoggingIn = true;
+
+  let cookie;
+
+  try {
+
+    const session =
+      suppliedSession !== null
+        ? suppliedSession
+        : readSession();
+
+    cookie =
+      normalizeSession(
+        session
+      );
+
+  } catch (error) {
+
+    botLoggingIn = false;
+
+    throw error;
+  }
+
+
+  console.log(
+    "[BANAT] logging in with saved Facebook session..."
   );
 
   console.log(
-    `[BANAT] online${botUserID ? ` as ${botUserID}` : ""}`
+    `[BANAT] session format: cookie string (${cookie.length} chars)`
   );
-}
 
-/* =========================================================
-   LOGIN
-========================================================= */
 
-function loginWithSession(
-  sessionValue
-) {
-  return new Promise(
-    (
-      resolve,
-      reject
-    ) => {
-      let cookie;
+  login(
+    cookie,
+    (error, loggedInApi) => {
 
-      try {
-        cookie =
-          normalizeSession(
-            sessionValue
-          );
-      } catch (error) {
-        reject(error);
+      botLoggingIn = false;
+
+      if (error) {
+
+        botOnline = false;
+
+        /*
+         * Important:
+         * Don't destroy dashboard when Facebook login fails.
+         */
+
+        lastError =
+          error?.message ||
+          String(error);
+
+        console.error(
+          "[BANAT] login failed:",
+          lastError
+        );
+
         return;
       }
 
-      console.log(
-        "[BANAT] logging in with cookie-string session..."
-      );
 
       /*
-       * IMPORTANT:
+       * THIS IS THE IMPORTANT FIX:
        *
-       * This intentionally uses:
-       *
-       * login(cookie, callback)
-       *
-       * instead of:
-       *
-       * login({ appState: [...] }, ...)
-       *
-       * because your installed ws3-fca
-       * build expects a string and calls
-       * .split() internally.
+       * The API returned by ws3-fca
+       * is assigned to the module-level
+       * variable.
+       */
+
+      api = loggedInApi;
+
+      botOnline = true;
+
+      lastError = "";
+
+      /*
+       * Save the normalized cookie string.
+       * Do not print it.
        */
 
       try {
-        login(
-          cookie,
-          (
-            error,
-            loggedApi
-          ) => {
-            if (error) {
-              reject(error);
-              return;
-            }
 
-            if (!loggedApi) {
-              reject(
-                new Error(
-                  "Messenger login returned no API."
-                )
-              );
-
-              return;
-            }
-
-            resolve(
-              loggedApi
-            );
-          }
+        saveSession(
+          cookie
         );
-      } catch (error) {
-        reject(error);
+
+      } catch (saveError) {
+
+        console.error(
+          "[BANAT] session save failed:",
+          saveError?.message ||
+            saveError
+        );
+
       }
+
+
+      start(
+        loggedInApi
+      );
+
     }
   );
+
 }
 
-/* =========================================================
-   LOGIN BOT
-========================================================= */
 
-async function loginBot(
-  sessionValue
-) {
-  const cookie =
-    normalizeSession(
-      sessionValue
-    );
+// ============================================================
+// BOT LOGOUT
+// ============================================================
 
-  /*
-   * Save successful-format
-   * session before login.
-   */
+async function logoutBot() {
 
-  saveSession(
-    cookie
-  );
+  const currentApi =
+    api;
 
-  /*
-   * Reset old bot state.
-   */
-
-  botOnline = false;
   api = null;
 
-  addLog(
-    "LOGIN",
-    "Starting Messenger login..."
-  );
+  botOnline = false;
+  botLoggingIn = false;
 
-  const loggedApi =
-    await loginWithSession(
-      cookie
-    );
+  botUserID = "";
+  botName = "";
 
-  start(
-    loggedApi
-  );
+  activeThreads.clear();
 
-  addLog(
-    "LOGIN",
-    "Messenger login successful."
-  );
+  threadQueues.clear();
+  threadLastSent.clear();
+  threadCooldown.clear();
 
-  return true;
-}
 
-/* =========================================================
-   AUTH
-========================================================= */
-
-function requireDashboardAuth(
-  req,
-  res,
-  next
-) {
   if (
-    req.session &&
-    req.session.dashboardAuth
+    currentApi &&
+    typeof currentApi.logout ===
+      "function"
   ) {
-    next();
-    return;
+
+    try {
+
+      await new Promise(
+        resolve => {
+
+          let finished = false;
+
+          const done = () => {
+
+            if (finished) {
+              return;
+            }
+
+            finished = true;
+
+            resolve();
+
+          };
+
+          try {
+
+            const result =
+              currentApi.logout(
+                done
+              );
+
+            if (
+              result &&
+              typeof result.then ===
+                "function"
+            ) {
+
+              result
+                .then(done)
+                .catch(done);
+
+            }
+
+          } catch (_) {
+
+            done();
+
+          }
+
+          setTimeout(
+            done,
+            3000
+          );
+
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        "[BANAT] logout error:",
+        error?.message ||
+          error
+      );
+
+    }
+
   }
 
-  res.status(401).json({
-    ok: false,
-    error: "Unauthorized"
-  });
+
+  /*
+   * Remove saved local session.
+   */
+
+  try {
+
+    if (
+      fs.existsSync(
+        SESSION_FILE
+      )
+    ) {
+
+      fs.unlinkSync(
+        SESSION_FILE
+      );
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      "[BANAT] session delete failed:",
+      error?.message ||
+        error
+    );
+
+  }
+
 }
 
-/* =========================================================
-   DASHBOARD LOGIN PAGE
-========================================================= */
 
-const LOGIN_HTML = `
+// ============================================================
+// DASHBOARD LOGIN PAGE
+// ============================================================
+
+app.get(
+  "/",
+  (req, res) => {
+
+    res.send(`
 <!DOCTYPE html>
-<html lang="en">
-
+<html>
 <head>
-
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 
-<meta
-  name="viewport"
-  content="width=device-width,initial-scale=1"
->
-
-<title>SANZU AI - Login</title>
+<title>Halimaw Dashboard Login</title>
 
 <style>
 
@@ -1495,58 +1744,47 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: Arial, sans-serif;
-  background:
-    linear-gradient(
-      135deg,
-      #f4f7fb,
-      #e9eef5
-    );
+  background: #f3f4f6;
   display: flex;
-  justify-content: center;
   align-items: center;
+  justify-content: center;
   color: #111827;
 }
 
 .login-box {
-  width: 92%;
-  max-width: 410px;
-  background: #ffffff;
+  width: min(420px, 92%);
+  background: white;
   border-radius: 18px;
-  padding: 34px;
-  box-shadow:
-    0 20px 60px
-    rgba(15,23,42,.12);
+  padding: 30px;
+  box-shadow: 0 15px 45px rgba(0,0,0,.12);
 }
 
 .logo {
   text-align: center;
-  font-size: 27px;
+  font-size: 30px;
   font-weight: 800;
-  letter-spacing: 3px;
+  margin-bottom: 8px;
 }
 
 .subtitle {
   text-align: center;
-  color: #64748b;
-  margin-top: 8px;
-  margin-bottom: 28px;
+  color: #6b7280;
+  margin-bottom: 25px;
 }
 
 label {
   display: block;
-  margin-top: 15px;
-  margin-bottom: 7px;
-  font-size: 13px;
   font-weight: 700;
+  margin: 14px 0 7px;
 }
 
 input {
   width: 100%;
-  padding: 13px 14px;
-  border: 1px solid #d7dee8;
+  padding: 13px;
+  border: 1px solid #d1d5db;
   border-radius: 10px;
+  font-size: 15px;
   outline: none;
-  font-size: 14px;
 }
 
 input:focus {
@@ -1557,10 +1795,11 @@ button {
   width: 100%;
   border: 0;
   border-radius: 10px;
-  padding: 13px;
+  padding: 14px;
   margin-top: 20px;
   background: #2563eb;
   color: white;
+  font-size: 16px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1570,59 +1809,57 @@ button:hover {
 }
 
 #error {
+  display: none;
   margin-top: 15px;
-  color: #dc2626;
-  text-align: center;
-  font-size: 13px;
+  padding: 12px;
+  border-radius: 9px;
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 </style>
-
 </head>
 
 <body>
 
 <div class="login-box">
 
-<div class="logo">
-SANZU AI
-</div>
+  <div class="logo">
+    HALIMAW
+  </div>
 
-<div class="subtitle">
-COMMAND CENTER
-</div>
+  <div class="subtitle">
+    Messenger Bot Dashboard
+  </div>
 
-<form id="loginForm">
+  <form id="loginForm">
 
-<label>
-Username
-</label>
+    <label>Username</label>
 
-<input
-  id="username"
-  type="text"
-  autocomplete="username"
-  required
->
+    <input
+      id="username"
+      autocomplete="username"
+      placeholder="Username"
+      required
+    >
 
-<label>
-Password
-</label>
+    <label>Password</label>
 
-<input
-  id="password"
-  type="password"
-  autocomplete="current-password"
-  required
->
+    <input
+      id="password"
+      type="password"
+      autocomplete="current-password"
+      placeholder="Password"
+      required
+    >
 
-<button type="submit">
-LOGIN
-</button>
+    <button type="submit">
+      Login
+    </button>
 
-</form>
+  </form>
 
-<div id="error"></div>
+  <div id="error"></div>
 
 </div>
 
@@ -1630,96 +1867,103 @@ LOGIN
 
 document
   .getElementById("loginForm")
-  .addEventListener(
-    "submit",
-    async function(e) {
+  .addEventListener("submit", async function(e) {
 
-      e.preventDefault();
+    e.preventDefault();
 
-      const errorBox =
-        document.getElementById(
-          "error"
+    const errorBox =
+      document.getElementById("error");
+
+    errorBox.style.display = "none";
+
+    const username =
+      document.getElementById("username").value;
+
+    const password =
+      document.getElementById("password").value;
+
+    try {
+
+      const response =
+        await fetch("/api/dashboard/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            username,
+            password
+          })
+        });
+
+      const data =
+        await response.json();
+
+      if (!data.ok) {
+        throw new Error(
+          data.error || "Login failed."
         );
-
-      errorBox.textContent =
-        "Logging in...";
-
-      try {
-
-        const response =
-          await fetch(
-            "/api/dashboard/login",
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json"
-              },
-
-              body:
-                JSON.stringify({
-                  username:
-                    document.getElementById(
-                      "username"
-                    ).value,
-
-                  password:
-                    document.getElementById(
-                      "password"
-                    ).value
-                })
-            }
-          );
-
-        const data =
-          await response.json();
-
-        if (!data.ok) {
-          errorBox.textContent =
-            data.error ||
-            "Login failed.";
-
-          return;
-        }
-
-        location.href =
-          "/dashboard";
-
-      } catch (error) {
-
-        errorBox.textContent =
-          error.message;
-
       }
 
+      localStorage.setItem(
+        "dashboardToken",
+        data.token
+      );
+
+      location.href =
+        "/dashboard";
+
+    } catch (error) {
+
+      errorBox.textContent =
+        error.message;
+
+      errorBox.style.display =
+        "block";
+
     }
-  );
+
+  });
 
 </script>
 
 </body>
 </html>
-`;
+    `);
 
-/* =========================================================
-   DASHBOARD
-========================================================= */
+  }
+);
 
-const DASHBOARD_HTML = `
+
+// ============================================================
+// DASHBOARD PAGE
+// ============================================================
+
+app.get(
+  "/dashboard",
+  (req, res) => {
+
+    if (
+      !isDashboardAuthenticated(req)
+    ) {
+
+      return res.redirect("/");
+
+    }
+
+    res.send(`
 <!DOCTYPE html>
-<html lang="en">
-
+<html>
 <head>
 
 <meta charset="UTF-8">
 
 <meta
   name="viewport"
-  content="width=device-width,initial-scale=1"
+  content="width=device-width,initial-scale=1.0"
 >
 
-<title>SANZU AI Dashboard</title>
+<title>Halimaw Dashboard</title>
 
 <style>
 
@@ -1729,158 +1973,131 @@ const DASHBOARD_HTML = `
 
 body {
   margin: 0;
+  background: #f3f4f6;
+  color: #111827;
   font-family: Arial, sans-serif;
-  background: #f4f7fb;
-  color: #172033;
 }
 
-.header {
+header {
   background: white;
-  border-bottom: 1px solid #e1e7ef;
-  padding: 17px 22px;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 18px 22px;
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
 }
 
 .brand {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 800;
-  letter-spacing: 2px;
 }
 
 .logout {
+  background: #ef4444;
+  color: white;
   border: 0;
-  background: #fee2e2;
-  color: #b91c1c;
-  padding: 9px 14px;
+  padding: 9px 15px;
   border-radius: 8px;
   cursor: pointer;
   font-weight: 700;
 }
 
 .container {
-  width: 94%;
-  max-width: 1100px;
+  width: min(1000px, 94%);
   margin: 25px auto;
-}
-
-.card {
-  background: white;
-  border: 1px solid #e1e7ef;
-  border-radius: 15px;
-  padding: 22px;
-  margin-bottom: 18px;
-  box-shadow:
-    0 5px 20px
-    rgba(15,23,42,.04);
-}
-
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 13px;
-  border-radius: 999px;
-  font-weight: 800;
-  font-size: 13px;
-}
-
-.online {
-  background: #dcfce7;
-  color: #15803d;
-}
-
-.offline {
-  background: #fee2e2;
-  color: #b91c1c;
 }
 
 .grid {
   display: grid;
   grid-template-columns:
-    repeat(
-      auto-fit,
-      minmax(190px, 1fr)
-    );
-  gap: 14px;
-  margin-bottom: 18px;
+    repeat(auto-fit, minmax(220px, 1fr));
+  gap: 15px;
 }
 
-.stat {
+.card {
   background: white;
-  border: 1px solid #e1e7ef;
-  border-radius: 14px;
-  padding: 18px;
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow:
+    0 5px 20px rgba(0,0,0,.06);
 }
 
-.label {
-  color: #718096;
-  font-size: 12px;
-  text-transform: uppercase;
-  font-weight: 700;
+.card h3 {
+  margin-top: 0;
 }
 
-.value {
-  margin-top: 8px;
-  font-size: 19px;
+.status {
+  font-size: 22px;
   font-weight: 800;
-  word-break: break-word;
+}
+
+.online {
+  color: #16a34a;
+}
+
+.offline {
+  color: #dc2626;
 }
 
 textarea {
   width: 100%;
-  min-height: 210px;
+  min-height: 220px;
   resize: vertical;
-  border: 1px solid #d5dce7;
+  border: 1px solid #d1d5db;
   border-radius: 10px;
-  padding: 13px;
+  padding: 12px;
   font-family: monospace;
-  outline: none;
-}
-
-textarea:focus {
-  border-color: #2563eb;
+  font-size: 13px;
 }
 
 button.action {
   border: 0;
   border-radius: 9px;
-  padding: 11px 17px;
-  margin-top: 12px;
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.loginbot {
-  background: #2563eb;
+  padding: 12px 17px;
   color: white;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 10px;
+  margin-right: 7px;
 }
 
-.logoutbot {
-  background: #fee2e2;
-  color: #b91c1c;
+.login-btn {
+  background: #2563eb;
 }
 
-.result {
+.stop-btn {
+  background: #ef4444;
+}
+
+.refresh-btn {
+  background: #111827;
+}
+
+.message {
   margin-top: 12px;
-  color: #475569;
+  padding: 11px;
+  border-radius: 9px;
+  background: #f3f4f6;
+  display: none;
 }
 
-pre {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 13px;
-  max-height: 350px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
+.small {
+  color: #6b7280;
+  font-size: 13px;
 }
 
-small {
-  color: #718096;
+.value {
+  font-size: 20px;
+  font-weight: 800;
+  margin-top: 7px;
+}
+
+.warning {
+  color: #92400e;
+  background: #fef3c7;
+  padding: 12px;
+  border-radius: 9px;
+  margin-bottom: 15px;
 }
 
 </style>
@@ -1889,442 +2106,534 @@ small {
 
 <body>
 
-<div class="header">
+<header>
 
-<div class="brand">
-SANZU AI COMMAND CENTER
-</div>
+  <div class="brand">
+    HALIMAW BOT
+  </div>
 
-<button
-  class="logout"
-  onclick="dashboardLogout()"
->
-LOGOUT
-</button>
+  <button
+    class="logout"
+    onclick="logoutDashboard()"
+  >
+    Logout
+  </button>
 
-</div>
+</header>
+
 
 <div class="container">
 
-<div class="card">
+  <div class="warning">
+    Never share your AppState/C3C publicly.
+    The dashboard does not display your saved session.
+  </div>
 
-<div
-  id="status"
-  class="status offline"
->
-🔴 OFFLINE
+
+  <div class="grid">
+
+    <div class="card">
+      <h3>Messenger Status</h3>
+      <div
+        id="status"
+        class="status"
+      >
+        Checking...
+      </div>
+    </div>
+
+
+    <div class="card">
+      <h3>Bot Account</h3>
+
+      <div
+        id="botName"
+        class="value"
+      >
+        -
+      </div>
+
+      <div
+        id="botUID"
+        class="small"
+      >
+        UID: -
+      </div>
+
+    </div>
+
+
+    <div class="card">
+      <h3>Messages</h3>
+
+      <div
+        id="messages"
+        class="value"
+      >
+        0
+      </div>
+
+    </div>
+
+
+    <div class="card">
+      <h3>Replies</h3>
+
+      <div
+        id="replies"
+        class="value"
+      >
+        0
+      </div>
+
+    </div>
+
+
+    <div class="card">
+      <h3>Errors</h3>
+
+      <div
+        id="errors"
+        class="value"
+      >
+        0
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <br>
+
+
+  <div class="card">
+
+    <h3>Facebook C3C / AppState</h3>
+
+    <div class="small">
+      Paste your exported AppState JSON or cookie string below.
+    </div>
+
+    <br>
+
+    <textarea
+      id="session"
+      placeholder="Paste C3C / AppState here..."
+    ></textarea>
+
+    <br>
+
+    <button
+      class="action login-btn"
+      onclick="loginBot()"
+    >
+      Login Messenger
+    </button>
+
+    <button
+      class="action stop-btn"
+      onclick="logoutBot()"
+    >
+      Logout Messenger
+    </button>
+
+    <button
+      class="action refresh-btn"
+      onclick="loadStatus()"
+    >
+      Refresh
+    </button>
+
+    <div
+      id="message"
+      class="message"
+    ></div>
+
+  </div>
+
+
+  <br>
+
+
+  <div class="card">
+
+    <h3>Bot Information</h3>
+
+    <p>
+      Last login:
+      <strong id="lastLogin">-</strong>
+    </p>
+
+    <p>
+      Last message:
+      <strong id="lastMessage">-</strong>
+    </p>
+
+    <p>
+      Active threads:
+      <strong id="threads">0</strong>
+    </p>
+
+    <p>
+      Last error:
+      <strong id="lastError">None</strong>
+    </p>
+
+  </div>
+
 </div>
 
-<h2>
-Messenger Bot
-</h2>
-
-<p>
-Control your Messenger bot from this dashboard.
-</p>
-
-</div>
-
-<div class="grid">
-
-<div class="stat">
-
-<div class="label">
-Account
-</div>
-
-<div
-  class="value"
-  id="botName"
->
-Unknown
-</div>
-
-</div>
-
-<div class="stat">
-
-<div class="label">
-Messenger UID
-</div>
-
-<div
-  class="value"
-  id="botUID"
->
--
-</div>
-
-</div>
-
-<div class="stat">
-
-<div class="label">
-Messages
-</div>
-
-<div
-  class="value"
-  id="totalMessages"
->
-0
-</div>
-
-</div>
-
-<div class="stat">
-
-<div class="label">
-Replies
-</div>
-
-<div
-  class="value"
-  id="totalReplies"
->
-0
-</div>
-
-</div>
-
-</div>
-
-<div class="card">
-
-<h2>
-Messenger Login
-</h2>
-
-<p>
-<small>
-Paste your AppState/C3C JSON or cookie string below.
-</small>
-</p>
-
-<textarea
-  id="appState"
-  placeholder='[{"key":"c_user","value":"..."},{"key":"xs","value":"..."}]'
-></textarea>
-
-<br>
-
-<button
-  class="action loginbot"
-  onclick="loginBot()"
->
-LOGIN BOT
-</button>
-
-<button
-  class="action logoutbot"
-  onclick="logoutBot()"
->
-LOGOUT BOT
-</button>
-
-<div
-  class="result"
-  id="result"
-></div>
-
-</div>
-
-<div class="card">
-
-<h2>
-System Logs
-</h2>
-
-<pre id="logs">
-Loading...
-</pre>
-
-</div>
-
-</div>
 
 <script>
+
+const token =
+  localStorage.getItem(
+    "dashboardToken"
+  );
+
+if (!token) {
+  location.href = "/";
+}
+
+
+async function apiRequest(
+  url,
+  options = {}
+) {
+
+  options.headers = {
+    ...(options.headers || {}),
+    "x-dashboard-token": token
+  };
+
+  const response =
+    await fetch(
+      url,
+      options
+    );
+
+  const data =
+    await response.json();
+
+  if (
+    response.status === 401
+  ) {
+
+    localStorage.removeItem(
+      "dashboardToken"
+    );
+
+    location.href = "/";
+
+    throw new Error(
+      "Session expired."
+    );
+
+  }
+
+  return data;
+}
+
+
+function showMessage(
+  text
+) {
+
+  const box =
+    document.getElementById(
+      "message"
+    );
+
+  box.textContent =
+    text;
+
+  box.style.display =
+    "block";
+
+}
+
 
 async function loadStatus() {
 
   try {
 
-    const response =
-      await fetch(
+    const data =
+      await apiRequest(
         "/api/status"
       );
 
-    if (
-      response.status === 401
-    ) {
-      location.href = "/";
+    if (!data.ok) {
       return;
     }
 
-    const data =
-      await response.json();
 
     const status =
       document.getElementById(
         "status"
       );
 
-    if (data.online) {
+    status.textContent =
+      data.bot.online
+        ? "ONLINE 🟢"
+        : "OFFLINE 🔴";
 
-      status.textContent =
-        "🟢 ONLINE";
+    status.className =
+      "status " +
+      (
+        data.bot.online
+          ? "online"
+          : "offline"
+      );
 
-      status.className =
-        "status online";
-
-    } else {
-
-      status.textContent =
-        "🔴 OFFLINE";
-
-      status.className =
-        "status offline";
-
-    }
 
     document.getElementById(
       "botName"
     ).textContent =
-      data.botName ||
-      "Unknown";
+      data.bot.name || "-";
+
 
     document.getElementById(
       "botUID"
     ).textContent =
-      data.botUID ||
-      "-";
+      "UID: " +
+      (data.bot.uid || "-");
+
 
     document.getElementById(
-      "totalMessages"
+      "messages"
     ).textContent =
-      data.totalMessages ||
-      0;
+      data.stats.messages;
+
 
     document.getElementById(
-      "totalReplies"
+      "replies"
     ).textContent =
-      data.totalReplies ||
-      0;
+      data.stats.replies;
+
 
     document.getElementById(
-      "logs"
+      "errors"
     ).textContent =
-      (data.logs || [])
-        .map(item =>
-          "[" +
-          item.time +
-          "] [" +
-          item.type +
-          "] " +
-          item.message
-        )
-        .join("\\n");
+      data.stats.errors;
+
+
+    document.getElementById(
+      "threads"
+    ).textContent =
+      data.stats.activeThreads;
+
+
+    document.getElementById(
+      "lastLogin"
+    ).textContent =
+      data.bot.lastLogin || "-";
+
+
+    document.getElementById(
+      "lastMessage"
+    ).textContent =
+      data.bot.lastMessage || "-";
+
+
+    document.getElementById(
+      "lastError"
+    ).textContent =
+      data.bot.lastError || "None";
 
   } catch (error) {
 
-    console.error(error);
+    console.error(
+      error
+    );
 
   }
 
 }
 
-/* =====================================================
-   BOT LOGIN
-===================================================== */
 
 async function loginBot() {
 
-  const result =
+  const session =
     document.getElementById(
-      "result"
-    );
-
-  const appState =
-    document.getElementById(
-      "appState"
+      "session"
     ).value.trim();
 
-  if (!appState) {
+  if (!session) {
 
-    result.textContent =
-      "Paste AppState/C3C first.";
+    showMessage(
+      "Paste your C3C/AppState first."
+    );
 
     return;
   }
 
-  result.textContent =
-    "Logging Messenger bot in...";
+
+  showMessage(
+    "Logging into Messenger..."
+  );
+
 
   try {
 
-    const response =
-      await fetch(
+    const data =
+      await apiRequest(
         "/api/bot/login",
         {
           method: "POST",
-
           headers: {
             "Content-Type":
               "application/json"
           },
-
-          body:
-            JSON.stringify({
-              appState
-            })
+          body: JSON.stringify({
+            session
+          })
         }
       );
 
-    const data =
-      await response.json();
 
     if (!data.ok) {
 
-      result.textContent =
+      showMessage(
         "❌ " +
         (
           data.error ||
           "Login failed."
-        );
+        )
+      );
 
       return;
     }
 
-    result.textContent =
-      "✅ Messenger bot is online.";
 
-    loadStatus();
+    document.getElementById(
+      "session"
+    ).value = "";
+
+
+    showMessage(
+      "✅ Login started. Refreshing status..."
+    );
+
+
+    setTimeout(
+      loadStatus,
+      2500
+    );
 
   } catch (error) {
 
-    result.textContent =
+    showMessage(
       "❌ " +
-      error.message;
+      error.message
+    );
 
   }
 
 }
 
-/* =====================================================
-   BOT LOGOUT
-===================================================== */
 
 async function logoutBot() {
 
+  if (
+    !confirm(
+      "Logout the Messenger bot?"
+    )
+  ) {
+    return;
+  }
+
+
   try {
 
-    const response =
-      await fetch(
+    const data =
+      await apiRequest(
         "/api/bot/logout",
         {
           method: "POST"
         }
       );
 
-    const data =
-      await response.json();
 
-    document.getElementById(
-      "result"
-    ).textContent =
+    showMessage(
       data.ok
-        ? "Bot logged out."
-        : (
-          data.error ||
-          "Logout failed."
-        );
+        ? "✅ Messenger bot logged out."
+        : "❌ Logout failed."
+    );
+
 
     loadStatus();
 
   } catch (error) {
 
-    document.getElementById(
-      "result"
-    ).textContent =
-      error.message;
+    showMessage(
+      "❌ " +
+      error.message
+    );
 
   }
 
 }
 
-/* =====================================================
-   DASHBOARD LOGOUT
-===================================================== */
 
-async function dashboardLogout() {
+async function logoutDashboard() {
 
-  await fetch(
-    "/api/dashboard/logout",
-    {
-      method: "POST"
-    }
+  try {
+
+    await apiRequest(
+      "/api/dashboard/logout",
+      {
+        method: "POST"
+      }
+    );
+
+  } catch (_) {}
+
+
+  localStorage.removeItem(
+    "dashboardToken"
   );
 
   location.href = "/";
 
 }
 
-/* =====================================================
-   AUTO REFRESH
-===================================================== */
 
 loadStatus();
 
 setInterval(
   loadStatus,
-  3000
+  5000
 );
 
 </script>
 
 </body>
-
 </html>
-`;
+    `);
 
-/* =========================================================
-   DASHBOARD ROUTES
-========================================================= */
-
-app.get(
-  "/",
-  (req, res) => {
-    if (
-      req.session &&
-      req.session.dashboardAuth
-    ) {
-      res.redirect(
-        "/dashboard"
-      );
-
-      return;
-    }
-
-    res.send(
-      LOGIN_HTML
-    );
   }
 );
+
+
+// ============================================================
+// DASHBOARD LOGIN API
+// ============================================================
 
 app.post(
   "/api/dashboard/login",
   (req, res) => {
+
     const username =
       String(
-        req.body?.username ||
-          ""
+        req.body?.username || ""
       );
 
     const password =
       String(
-        req.body?.password ||
-          ""
+        req.body?.password || ""
       );
+
 
     if (
       username !==
@@ -2332,248 +2641,215 @@ app.post(
       password !==
         DASHBOARD_PASSWORD
     ) {
-      res.status(401).json({
+
+      return res.status(401).json({
         ok: false,
-        error:
-          "Invalid dashboard username or password."
+        error: "Invalid username or password."
       });
 
-      return;
     }
 
-    req.session.dashboardAuth =
-      true;
+
+    const token =
+      createDashboardToken();
+
+    dashboardTokens.add(
+      token
+    );
+
+
+    res.json({
+      ok: true,
+      token
+    });
+
+  }
+);
+
+
+// ============================================================
+// DASHBOARD LOGOUT API
+// ============================================================
+
+app.post(
+  "/api/dashboard/logout",
+  requireDashboard,
+  (req, res) => {
+
+    const token =
+      req.headers[
+        "x-dashboard-token"
+      ];
+
+    if (token) {
+      dashboardTokens.delete(
+        String(token)
+      );
+    }
 
     res.json({
       ok: true
     });
+
   }
 );
 
-app.post(
-  "/api/dashboard/logout",
-  (
-    req,
-    res
-  ) => {
-    req.session.destroy(
-      () => {
-        res.json({
-          ok: true
-        });
-      }
-    );
-  }
-);
 
-app.get(
-  "/dashboard",
-  requireDashboardAuth,
-  (
-    req,
-    res
-  ) => {
-    res.send(
-      DASHBOARD_HTML
-    );
-  }
-);
-
-/* =========================================================
-   STATUS API
-========================================================= */
+// ============================================================
+// BOT STATUS
+// ============================================================
 
 app.get(
   "/api/status",
-  requireDashboardAuth,
-  (
-    req,
-    res
-  ) => {
+  requireDashboard,
+  (req, res) => {
+
     res.json({
       ok: true,
 
-      online:
-        botOnline,
+      bot: {
+        online: botOnline,
+        loggingIn: botLoggingIn,
+        name: botName,
+        uid: botUserID,
+        lastLogin: lastLoginTime,
+        lastMessage: lastMessageTime,
+        lastError
+      },
 
-      botName:
-        botName,
+      stats: {
+        messages: totalMessages,
+        replies: totalReplies,
+        errors: totalErrors,
+        activeThreads:
+          activeThreads.size,
+        globalActive
+      }
 
-      botUID:
-        botUserID,
-
-      botStartedAt:
-        botStartedAt,
-
-      lastError:
-        lastError,
-
-      totalMessages:
-        totalMessages,
-
-      totalReplies:
-        totalReplies,
-
-      totalErrors:
-        totalErrors,
-
-      activeThreads:
-        activeThreads.size,
-
-      logs:
-        logs.slice(
-          0,
-          100
-        )
     });
+
   }
 );
 
-/* =========================================================
-   BOT LOGIN API
-========================================================= */
+
+// ============================================================
+// BOT LOGIN API
+// ============================================================
 
 app.post(
   "/api/bot/login",
-  requireDashboardAuth,
-  async (
-    req,
-    res
-  ) => {
+  requireDashboard,
+  (req, res) => {
+
+    const session =
+      req.body?.session;
+
+    if (!session) {
+
+      return res.status(400).json({
+        ok: false,
+        error: "C3C/AppState is required."
+      });
+
+    }
+
+
+    if (botLoggingIn) {
+
+      return res.status(409).json({
+        ok: false,
+        error: "Bot login is already in progress."
+      });
+
+    }
+
+
     try {
-      const input =
-        req.body?.appState;
 
-      if (!input) {
-        res.status(400).json({
-          ok: false,
-          error:
-            "AppState/C3C is required."
-        });
-
-        return;
-      }
-
-      await loginBot(
-        input
+      loginBot(
+        session
       );
 
       res.json({
         ok: true,
-        online:
-          botOnline,
-
-        botName:
-          botName,
-
-        botUID:
-          botUserID
+        message:
+          "Facebook login started."
       });
+
     } catch (error) {
-      botOnline = false;
 
-      lastError =
-        error?.message ||
-        String(error);
+      botLoggingIn = false;
 
-      totalErrors++;
+      res.status(400).json({
+        ok: false,
+        error:
+          error?.message ||
+          String(error)
+      });
 
-      addLog(
-        "LOGIN_ERROR",
-        lastError
-      );
+    }
+
+  }
+);
+
+
+// ============================================================
+// BOT LOGOUT API
+// ============================================================
+
+app.post(
+  "/api/bot/logout",
+  requireDashboard,
+  async (req, res) => {
+
+    try {
+
+      await logoutBot();
+
+      res.json({
+        ok: true,
+        message:
+          "Messenger bot logged out."
+      });
+
+    } catch (error) {
 
       res.status(500).json({
         ok: false,
         error:
-          lastError
+          error?.message ||
+          String(error)
       });
+
     }
+
   }
 );
 
-/* =========================================================
-   BOT LOGOUT API
-========================================================= */
 
-app.post(
-  "/api/bot/logout",
-  requireDashboardAuth,
-  (
-    req,
-    res
-  ) => {
-    try {
-      /*
-       * ws3-fca may expose logout.
-       */
-
-      if (
-        globalThis.api &&
-        typeof globalThis.api.logout ===
-          "function"
-      ) {
-        globalThis.api.logout();
-      }
-    } catch (_) {}
-
-    botOnline = false;
-    botUserID = "";
-    botName = "Unknown";
-
-    addLog(
-      "BOT",
-      "Messenger bot logged out."
-    );
-
-    res.json({
-      ok: true
-    });
-  }
-);
-
-/* =========================================================
-   HEALTH CHECK
-========================================================= */
+// ============================================================
+// HEALTH
+// ============================================================
 
 app.get(
   "/health",
-  (
-    req,
-    res
-  ) => {
-    res.status(200).json({
+  (req, res) => {
+
+    res.json({
       ok: true,
-      service:
-        "banat-dashboard",
-      botOnline:
-        botOnline,
+      service: "banat-messenger-dashboard",
+      botOnline,
       uptime:
         process.uptime()
     });
+
   }
 );
 
-/* =========================================================
-   404
-========================================================= */
 
-app.use(
-  (
-    req,
-    res
-  ) => {
-    res.status(404).json({
-      ok: false,
-      error:
-        "Not found"
-    });
-  }
-);
-
-/* =========================================================
-   SERVER
-========================================================= */
+// ============================================================
+// SERVER
+// ============================================================
 
 const server =
   http.createServer(
@@ -2583,112 +2859,92 @@ const server =
 server.listen(
   PORT,
   () => {
+
     console.log(
-      "========================================"
+      `[DASHBOARD] server running on port ${PORT}`
     );
 
     console.log(
-      "      SANZU AI BANAT COMMAND CENTER"
+      `[DASHBOARD] login: ${DASHBOARD_USERNAME}`
     );
 
-    console.log(
-      "========================================"
-    );
+  }
+);
 
-    console.log(
-      `Dashboard running on port ${PORT}`
-    );
 
-    console.log(
-      `Dashboard username: ${DASHBOARD_USERNAME}`
-    );
+// ============================================================
+// AUTO LOGIN SAVED SESSION
+// ============================================================
 
-    console.log(
-      "Dashboard password: halimaw123"
-    );
+setTimeout(
+  () => {
 
-    console.log(
-      "========================================"
-    );
+    if (
+      process.env.FB_COOKIES ||
+      process.env.FB_APPSTATE ||
+      fs.existsSync(
+        SESSION_FILE
+      ) ||
+      fs.existsSync(
+        path.join(
+          process.cwd(),
+          "cookies.json"
+        )
+      )
+    ) {
 
-    /*
-     * Auto-login from appstate.json
-     */
+      try {
 
-    const saved =
-      getSavedSession();
+        console.log(
+          "[BANAT] saved Facebook session detected."
+        );
 
-    if (saved) {
-      addLog(
-        "LOGIN",
-        "Saved AppState detected. Attempting automatic login..."
-      );
+        loginBot();
 
-      loginBot(
-        saved
-      ).catch(error => {
-        botOnline = false;
+      } catch (error) {
+
+        botLoggingIn = false;
 
         lastError =
           error?.message ||
           String(error);
 
-        addLog(
-          "AUTO_LOGIN_ERROR",
+        console.error(
+          "[BANAT] auto-login failed:",
           lastError
         );
-      });
+
+        console.log(
+          "[BANAT] Dashboard is still available."
+        );
+
+      }
+
     } else {
-      addLog(
-        "BOT",
-        "No saved session. Login from dashboard."
+
+      console.log(
+        "[BANAT] No saved Facebook session."
       );
+
+      console.log(
+        "[BANAT] Login through the dashboard."
+      );
+
     }
-  }
+
+  },
+  1000
 );
 
-/* =========================================================
-   PROCESS ERRORS
-========================================================= */
 
-process.on(
-  "uncaughtException",
-  error => {
-    totalErrors++;
-
-    lastError =
-      error?.message ||
-      String(error);
-
-    addLog(
-      "UNCAUGHT",
-      lastError
-    );
-  }
-);
-
-process.on(
-  "unhandledRejection",
-  error => {
-    totalErrors++;
-
-    lastError =
-      error?.message ||
-      String(error);
-
-    addLog(
-      "UNHANDLED",
-      lastError
-    );
-  }
-);
-
-/* =========================================================
-   EXPORTS
-========================================================= */
+// ============================================================
+// EXPORTS
+// ============================================================
 
 module.exports = {
   trafficSendMessage,
   onMessage,
-  handleBanatCommand
+  handleBanatCommand,
+  loginBot,
+  logoutBot
 };
