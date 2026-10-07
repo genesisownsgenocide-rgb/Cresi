@@ -1,8 +1,8 @@
 "use strict";
 
 /*
- * BANAT-ONLY MESSENGER BOT + EMBEDDED DASHBOARD
- * ----------------------------------------------
+ * BANAT-ONLY MESSENGER BOT + EMBEDDED DASHBOARD (CRESI FRAMEWORK)
+ * -------------------------------------------------------------
  *
  * DASHBOARD LOGIN:
  *   Username: Admin
@@ -344,83 +344,34 @@ function readSession() {
 
 
 /* =========================================================
-   NORMALIZE SESSION
+   NORMALIZE SESSION (C3C AppState Only)
 ========================================================= */
 
 function normalizeSession(value) {
+  if (!value) {
+    throw new Error("C3C session data is empty.");
+  }
 
-  if (
-    typeof value === "string"
-  ) {
+  let sessionData = value;
 
-    const cookie =
-      value.trim();
-
-    if (!cookie) {
-
-      throw new Error(
-        "Facebook cookie session is empty."
-      );
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new Error("C3C session string is empty.");
     }
 
-    return cookie;
+    try {
+      sessionData = JSON.parse(trimmed);
+    } catch (error) {
+      throw new Error("Invalid C3C format. Please paste a valid JSON array or object from C3C.");
+    }
   }
 
-
-  const entries =
-    Array.isArray(value)
-      ? value
-      : Array.isArray(value?.appState)
-        ? value.appState
-        : Array.isArray(value?.cookies)
-          ? value.cookies
-          : null;
-
-
-  if (!entries) {
-
-    throw new Error(
-      "Facebook session must be a cookie string or a JSON array of cookie/appState entries."
-    );
+  if (!Array.isArray(sessionData) && typeof sessionData !== "object") {
+    throw new Error("C3C session must be a valid JSON array or object.");
   }
 
-
-  const parts =
-    entries
-      .map(cookie => {
-
-        const key =
-          cookie?.key ??
-          cookie?.name;
-
-        const val =
-          cookie?.value;
-
-        if (
-          key == null ||
-          val == null
-        ) {
-          return null;
-        }
-
-        return (
-          String(key).trim() +
-          "=" +
-          String(val)
-        );
-      })
-      .filter(Boolean);
-
-
-  if (!parts.length) {
-
-    throw new Error(
-      "Facebook session contains no valid cookie entries."
-    );
-  }
-
-
-  return parts.join("; ");
+  return sessionData;
 }
 
 
@@ -1455,12 +1406,12 @@ function connectBotWithSession(
     true;
 
 
-  let cookie;
+  let appStateData;
 
 
   try {
 
-    cookie =
+    appStateData =
       normalizeSession(
         session
       );
@@ -1477,12 +1428,8 @@ function connectBotWithSession(
   }
 
 
-  /*
-   * Never print the actual cookie/session.
-   */
-
   console.log(
-    `[BANAT] logging in with dashboard session (${cookie.length} chars)...`
+    `[BANAT] logging in with dashboard C3C session...`
   );
 
 
@@ -1524,7 +1471,7 @@ function connectBotWithSession(
       try {
 
         login(
-          cookie,
+          appStateData,
           (error, loggedApi) => {
 
             if (error) {
@@ -2826,14 +2773,13 @@ button:disabled {
   <div class="card">
 
     <h2>
-      Facebook Session / C3C
+      Facebook Session / C3C AppState
     </h2>
 
 
     <div class="notice">
 
-      Paste your exported Facebook
-      session/cookie data below.
+      Paste your exported C3C AppState JSON data below.
 
       The dashboard does not display
       the submitted session after
@@ -2847,7 +2793,7 @@ button:disabled {
 
     <textarea
       id="session"
-      placeholder="Paste C3C / cookie / appstate session here..."
+      placeholder="Paste C3C appstate JSON here..."
       spellcheck="false"
       autocomplete="off"
     ></textarea>
@@ -3239,7 +3185,7 @@ async function connectBot() {
   if (!session) {
 
     showMessage(
-      "Please paste your C3C/session first."
+      "Please paste your C3C appstate JSON first."
     );
 
     return;
@@ -3318,11 +3264,6 @@ async function connectBot() {
       return;
     }
 
-
-    /*
-     * Clear session immediately after
-     * successful submission.
-     */
 
     sessionInput.value =
       "";
@@ -3982,7 +3923,7 @@ const server =
                   false,
 
                 error:
-                  "Session/C3C is required."
+                  "C3C session is required."
               }
             );
 
@@ -3997,10 +3938,6 @@ const server =
               session
             );
 
-
-            /*
-             * Never return session data.
-             */
 
             sendJSON(
               res,
