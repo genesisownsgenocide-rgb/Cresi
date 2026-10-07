@@ -1,19 +1,16 @@
 {
-  "name": "cresi-sinzu-ai",
+  "name": "banat-messenger-dashboard",
   "version": "1.0.0",
-  "private": true,
-  "description": "SINZU AI Messenger Command Center",
+  "description": "Banat Messenger Bot with Web Dashboard",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "check": "node --check index.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "express-session": "^1.18.1",
-    "ws3-fca": "2.0.1"
+    "ws3-fca": "^2.0.1"
   }
 }
