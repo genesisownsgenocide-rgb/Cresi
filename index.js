@@ -10,7 +10,6 @@ const { login } = require("ws3-fca");
 /*
  * ============================================================
  * EXISTING HUMAN / BANAT SYSTEM
- * HUWAG GALAWIN ANG MGA FILE NA ITO.
  * ============================================================
  */
 
@@ -31,52 +30,84 @@ const {
 
 /*
  * ============================================================
- * CONFIG
+ * NICKNAME / GC NAME PROTECTION
  * ============================================================
  */
+
+const {
+  handleCommand: handleNicknameCommand,
+  protectNickname
+} = require("./setallnick");
+
+const {
+  handleCommand: handleGCNameCommand,
+  protectGCName
+} = require("./gcname-lock");
+
+/*
+ * ============================================================
+ * EXPRESS
+ * ============================================================
+ */
+
+const app = express();
+const server = http.createServer(app);
 
 const PORT = Number(process.env.PORT || 10000);
 
 /*
- * DASHBOARD LOGIN
- * No Environment Variables required.
+ * Render / Railway reverse proxy support
  */
+app.set("trust proxy", 1);
+
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+
+/*
+ * ============================================================
+ * DASHBOARD LOGIN
+ * ============================================================
+ */
+
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "halimaw123";
 
+app.use(
+  session({
+    secret: "sinzu-dashboard-session-secret-change-this",
+    resave: false,
+    saveUninitialized: false,
+    proxy: true,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    }
+  })
+);
+
 /*
- * BANAT SETTINGS
+ * ============================================================
+ * CONFIG
+ * ============================================================
  */
 
 const DEFAULT_ON =
-  /^(1|true|yes|on)$/i.test(
-    process.env.BANAT_DEFAULT_ON || "false"
-  );
+  String(process.env.BANAT_DEFAULT_ON || "true").toLowerCase() === "true";
 
 const GLOBAL_SEND_LIMIT = Math.max(
   1,
-  Number(
-    process.env.BANAT_GLOBAL_SEND_LIMIT || 2
-  )
+  Number(process.env.GLOBAL_SEND_LIMIT || 2)
 );
 
 const THREAD_COOLDOWN_MS = Math.max(
   0,
-  Number(
-    process.env.BANAT_THREAD_COOLDOWN_MS ||
-      12000
-  )
+  Number(process.env.THREAD_COOLDOWN_MS || 12000)
 );
 
-const RETRY_DELAYS = [
-  1500,
-  4000,
-  8000
-];
+const RETRY_DELAYS = [1500, 4000, 8000];
 
-/*
- * Official Admin UID
- */
 const ADMIN_UID = "61595204307407";
 
 /*
@@ -86,10 +117,10 @@ const ADMIN_UID = "61595204307407";
  */
 
 let botApi = null;
-let botUserID = "";
-let botName = "";
-let botStatus = "OFFLINE";
-let botError = "";
+let botUserID = null;
+let botName = "Not logged in";
+let botStatus = "offline";
+let botError = null;
 let botLoginAt = null;
 let botConnecting = false;
 
@@ -113,9 +144,7 @@ let globalActive = 0;
  */
 
 function sleep(ms) {
-  return new Promise(resolve =>
-    setTimeout(resolve, ms)
-  );
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function escapeHtml(value) {
@@ -128,25 +157,25 @@ function escapeHtml(value) {
 }
 
 function uptimeText() {
-  const sec = Math.floor(
-    process.uptime()
+  if (!botLoginAt) return "0s";
+
+  const seconds = Math.floor(
+    (Date.now() - botLoginAt) / 1000
   );
 
-  const days = Math.floor(
-    sec / 86400
-  );
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
 
-  const hours = Math.floor(
-    (sec % 86400) / 3600
-  );
+  const parts = [];
 
-  const minutes = Math.floor(
-    (sec % 3600) / 60
-  );
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  parts.push(`${secs}s`);
 
-  const seconds = sec % 60;
-
-  return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+  return parts.join(" ");
 }
 
 /*
@@ -155,1166 +184,848 @@ function uptimeText() {
  * ============================================================
  */
 
-function normalizeSession(value) {
-  /*
-   * Plain cookie string
-   */
-  if (typeof value === "string") {
-    const cookie =
-      value.trim();
+function normalizeSession(input) {
+  if (!input) return null;
 
-    if (!cookie) {
-      throw new Error(
-        "Empty Facebook session."
-      );
+  if (typeof input === "object") {
+    return input;
+  }
+
+  const value = String(input).trim();
+
+  if (!value) return null;
+
+  try {
+    const parsed = JSON.parse(value);
+
+    if (parsed && typeof parsed === "object") {
+      return parsed;
     }
-
-    return cookie;
+  } catch (_) {
+    // Not JSON. Continue as cookie string.
   }
 
-  /*
-   * AppState array OR object containing
-   * appState/cookies.
-   */
-  const entries =
-    Array.isArray(value)
-      ? value
-      : Array.isArray(
-          value?.appState
-        )
-        ? value.appState
-        : Array.isArray(
-            value?.cookies
-          )
-          ? value.cookies
-          : null;
-
-  if (!entries) {
-    throw new Error(
-      "AppState must be a JSON array or an object containing appState/cookies."
-    );
-  }
-
-  const parts = entries
-    .map(cookie => {
-      const key =
-        cookie?.key ??
-        cookie?.name;
-
-      const val =
-        cookie?.value;
-
-      if (
-        key == null ||
-        val == null
-      ) {
-        return null;
-      }
-
-      return (
-        String(key).trim() +
-        "=" +
-        String(val)
-      );
-    })
-    .filter(Boolean);
-
-  if (!parts.length) {
-    throw new Error(
-      "No valid cookies found in AppState."
-    );
-  }
-
-  return parts.join("; ");
+  return value;
 }
 
 function parseSessionInput(input) {
-  const text =
-    String(input || "")
-      .trim();
-
-  if (!text) {
-    throw new Error(
-      "Ilagay muna ang AppState/C3C."
-    );
-  }
-
-  /*
-   * JSON AppState
-   */
-  if (
-    text.startsWith("[") ||
-    text.startsWith("{")
-  ) {
-    try {
-      return normalizeSession(
-        JSON.parse(text)
-      );
-    } catch (_) {
-      /*
-       * Continue as cookie string.
-       */
-    }
-  }
-
-  /*
-   * Cookie string
-   */
-  return normalizeSession(
-    text
-  );
+  return normalizeSession(input);
 }
 
 function getSavedSession() {
-  /*
-   * Optional environment session.
-   */
-  const envSession =
-    process.env.FB_APPSTATE ||
-    process.env.FB_COOKIES;
+  const candidates = [
+    process.env.FB_APPSTATE,
+    process.env.FB_COOKIES
+  ];
 
-  if (envSession) {
-    try {
-      return parseSessionInput(
-        envSession
-      );
-    } catch (_) {}
-  }
+  for (const candidate of candidates) {
+    if (candidate) {
+      const parsed = parseSessionInput(candidate);
 
-  /*
-   * Optional local AppState.
-   */
-  const appStatePath =
-    path.join(
-      process.cwd(),
-      "appstate.json"
-    );
-
-  if (
-    fs.existsSync(
-      appStatePath
-    )
-  ) {
-    const raw =
-      fs.readFileSync(
-        appStatePath,
-        "utf8"
-      );
-
-    return parseSessionInput(
-      raw
-    );
-  }
-
-  return null;
-}
-
-function saveSession(
-  sessionValue
-) {
-  const filePath =
-    path.join(
-      process.cwd(),
-      "appstate.json"
-    );
-
-  /*
-   * Validate before saving.
-   */
-  normalizeSession(
-    sessionValue
-  );
-
-  let dataToSave =
-    sessionValue;
-
-  /*
-   * Preserve JSON AppState format.
-   */
-  if (
-    typeof sessionValue ===
-    "string"
-  ) {
-    try {
-      dataToSave =
-        JSON.parse(
-          sessionValue
-        );
-    } catch (_) {
-      /*
-       * Plain cookie string.
-       */
-      dataToSave =
-        sessionValue;
+      if (parsed) {
+        return parsed;
+      }
     }
   }
 
-  fs.writeFileSync(
-    filePath,
-    typeof dataToSave ===
-      "string"
-      ? dataToSave
-      : JSON.stringify(
-          dataToSave,
-          null,
-          2
-        ),
-    "utf8"
-  );
+  const file = path.join(__dirname, "appstate.json");
+
+  try {
+    if (!fs.existsSync(file)) {
+      return null;
+    }
+
+    const raw = fs.readFileSync(file, "utf8").trim();
+
+    if (!raw) {
+      return null;
+    }
+
+    return parseSessionInput(raw);
+  } catch (error) {
+    console.error(
+      "[APPSTATE] Failed reading saved session:",
+      error.message
+    );
+
+    return null;
+  }
+}
+
+function saveSession(sessionValue) {
+  try {
+    const file = path.join(__dirname, "appstate.json");
+
+    fs.writeFileSync(
+      file,
+      JSON.stringify(sessionValue, null, 2),
+      "utf8"
+    );
+
+    console.log("[APPSTATE] Session saved.");
+    return true;
+  } catch (error) {
+    console.error(
+      "[APPSTATE] Failed saving session:",
+      error.message
+    );
+
+    return false;
+  }
 }
 
 /*
  * ============================================================
- * BOT ACCOUNT INFORMATION
+ * ACCOUNT INFO
  * ============================================================
  */
 
-async function getBotAccountInfo(
-  api
-) {
-  let uid = "";
+function getBotAccountInfo(api) {
+  return new Promise(resolve => {
+    if (!api || typeof api.getCurrentUserID !== "function") {
+      resolve({
+        uid: null,
+        name: "Unknown"
+      });
 
-  try {
-    uid = String(
-      api.getCurrentUserID?.() ||
-        ""
+      return;
+    }
+
+    let uid = null;
+
+    try {
+      uid = api.getCurrentUserID();
+    } catch (_) {}
+
+    if (!uid) {
+      resolve({
+        uid: null,
+        name: "Unknown"
+      });
+
+      return;
+    }
+
+    if (typeof api.getUserInfo !== "function") {
+      resolve({
+        uid: String(uid),
+        name: "Messenger Bot"
+      });
+
+      return;
+    }
+
+    api.getUserInfo(
+      [uid],
+      (error, info) => {
+        if (error || !info || !info[uid]) {
+          resolve({
+            uid: String(uid),
+            name: "Messenger Bot"
+          });
+
+          return;
+        }
+
+        resolve({
+          uid: String(uid),
+          name:
+            info[uid].name ||
+            info[uid].firstName ||
+            "Messenger Bot"
+        });
+      }
     );
-  } catch (_) {}
+  });
+}
 
-  botUserID = uid;
+/*
+ * ============================================================
+ * MESSAGE TRAFFIC
+ * ============================================================
+ */
 
-  if (!uid) {
-    botName = "Unknown";
+function enqueue(threadID, task) {
+  const key = String(threadID);
+
+  if (!threadQueues.has(key)) {
+    threadQueues.set(key, []);
+  }
+
+  const queue = threadQueues.get(key);
+
+  return new Promise((resolve, reject) => {
+    queue.push({
+      task,
+      resolve,
+      reject
+    });
+
+    processQueue(key);
+  });
+}
+
+async function processQueue(threadID) {
+  const key = String(threadID);
+  const queue = threadQueues.get(key);
+
+  if (!queue || !queue.length) {
     return;
   }
 
-  try {
-    const info =
-      await new Promise(
-        resolve => {
-          if (
-            !api.getUserInfo ||
-            typeof api.getUserInfo !==
-              "function"
-          ) {
-            resolve(null);
-            return;
-          }
-
-          api.getUserInfo(
-            uid,
-            (
-              error,
-              result
-            ) => {
-              if (error) {
-                resolve(null);
-                return;
-              }
-
-              resolve(result);
-            }
-          );
-        }
-      );
-
-    if (
-      info &&
-      info[uid]
-    ) {
-      botName =
-        info[uid].name ||
-        info[uid].firstName ||
-        "Unknown";
-    } else {
-      botName =
-        "Unknown";
-    }
-  } catch (_) {
-    botName =
-      "Unknown";
+  if (queue.running) {
+    return;
   }
-}
 
-/*
- * ============================================================
- * BANAT TRAFFIC SYSTEM
- * ============================================================
- */
+  queue.running = true;
 
-function enqueue(
-  threadID,
-  job
-) {
-  const key =
-    String(threadID);
+  while (queue.length) {
+    const item = queue.shift();
 
-  const current =
-    threadQueues.get(key) ||
-    Promise.resolve();
+    try {
+      const result = await item.task();
+      item.resolve(result);
+    } catch (error) {
+      item.reject(error);
+    }
+  }
 
-  const next =
-    current
-      .catch(() => {})
-      .then(job)
-      .finally(() => {
-        if (
-          threadQueues.get(
-            key
-          ) === next
-        ) {
-          threadQueues.delete(
-            key
-          );
-        }
-      });
-
-  threadQueues.set(
-    key,
-    next
-  );
-
-  return next;
+  queue.running = false;
 }
 
 async function acquireGlobalSlot() {
-  while (
-    globalActive >=
-    GLOBAL_SEND_LIMIT
-  ) {
-    await sleep(150);
+  while (globalActive >= GLOBAL_SEND_LIMIT) {
+    await sleep(100);
   }
 
   globalActive++;
 }
 
 function releaseGlobalSlot() {
-  globalActive =
-    Math.max(
-      0,
-      globalActive - 1
-    );
-}
-
-function is1545012(
-  error
-) {
-  const text =
-    JSON.stringify(
-      error || ""
-    );
-
-  return /1545012|temporarily unavailable|message could not be sent/i.test(
-    text
+  globalActive = Math.max(
+    0,
+    globalActive - 1
   );
 }
 
-function trafficSendMessage(
-  api,
-  message,
-  threadID,
-  callback,
-  replyToMessageID = null
-) {
-  const key =
-    String(threadID);
+function is1545012(error) {
+  const text = String(
+    error?.errorDescription ||
+    error?.message ||
+    error ||
+    ""
+  );
 
-  return enqueue(
-    key,
-    async () => {
-      const now =
-        Date.now();
+  return text.includes("1545012");
+}
 
-      const cooldownUntil =
-        Number(
-          threadCooldown.get(
-            key
-          ) || 0
-        );
+async function trafficSendMessage(api, message, threadID) {
+  if (!api || typeof api.sendMessage !== "function") {
+    throw new Error("Messenger API unavailable.");
+  }
 
-      if (
-        cooldownUntil >
-        now
-      ) {
-        callback(
-          new Error(
-            `thread cooldown active for ${
-              cooldownUntil - now
-            }ms`
-          )
-        );
+  const key = String(threadID);
 
-        return;
-      }
+  return enqueue(key, async () => {
+    const lastSent = threadLastSent.get(key) || 0;
+    const wait =
+      THREAD_COOLDOWN_MS -
+      (Date.now() - lastSent);
 
-      const sinceLast =
-        now -
-        Number(
-          threadLastSent.get(
-            key
-          ) || 0
-        );
+    if (wait > 0) {
+      await sleep(wait);
+    }
 
-      if (
-        sinceLast <
-        THREAD_COOLDOWN_MS
-      ) {
-        await sleep(
-          THREAD_COOLDOWN_MS -
-            sinceLast
-        );
-      }
+    await acquireGlobalSlot();
 
-      await acquireGlobalSlot();
+    try {
+      let lastError = null;
 
-      try {
-        let lastError =
-          null;
-
-        for (
-          let attempt = 0;
-          attempt <=
-          RETRY_DELAYS.length;
-          attempt++
-        ) {
-          try {
-            const result =
-              await new Promise(
-                (
-                  resolve,
-                  reject
-                ) => {
-                  let settled =
-                    false;
-
-                  const done = (
-                    err,
-                    info
-                  ) => {
-                    if (
-                      settled
-                    ) {
-                      return;
-                    }
-
-                    settled =
-                      true;
-
-                    if (err) {
-                      reject(
-                        err
-                      );
-                    } else {
-                      resolve(
-                        info
-                      );
-                    }
-                  };
-
-                  try {
-                    let returned;
-
-                    if (
-                      replyToMessageID
-                    ) {
-                      returned =
-                        api.sendMessage(
-                          message,
-                          threadID,
-                          done,
-                          replyToMessageID
-                        );
-                    } else {
-                      returned =
-                        api.sendMessage(
-                          message,
-                          threadID,
-                          done
-                        );
-                    }
-
-                    if (
-                      returned &&
-                      typeof returned.then ===
-                        "function"
-                    ) {
-                      returned
-                        .then(
-                          info =>
-                            done(
-                              null,
-                              info
-                            )
-                        )
-                        .catch(
-                          done
-                        );
-                    }
-                  } catch (
-                    error
-                  ) {
-                    reject(
-                      error
-                    );
+      for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+        try {
+          const result = await new Promise(
+            (resolve, reject) => {
+              api.sendMessage(
+                message,
+                threadID,
+                (error, info) => {
+                  if (error) {
+                    reject(error);
+                    return;
                   }
+
+                  resolve(info);
                 }
               );
-
-            threadLastSent.set(
-              key,
-              Date.now()
-            );
-
-            callback(
-              null,
-              result
-            );
-
-            return;
-          } catch (
-            error
-          ) {
-            lastError =
-              error;
-
-            if (
-              !is1545012(
-                error
-              ) ||
-              attempt >=
-                RETRY_DELAYS.length
-            ) {
-              break;
             }
+          );
 
-            threadCooldown.set(
-              key,
-              Date.now() +
-                Math.min(
-                  15000,
-                  RETRY_DELAYS[
-                    attempt
-                  ]
-                )
-            );
-
-            await sleep(
-              RETRY_DELAYS[
-                attempt
-              ]
-            );
-
-            threadCooldown.delete(
-              key
-            );
-          }
-        }
-
-        if (
-          is1545012(
-            lastError
-          )
-        ) {
-          threadCooldown.set(
+          threadLastSent.set(
             key,
-            Date.now() +
-              5 *
-                60 *
-                1000
+            Date.now()
+          );
+
+          return result;
+        } catch (error) {
+          lastError = error;
+
+          if (
+            attempt >= RETRY_DELAYS.length ||
+            !is1545012(error)
+          ) {
+            throw error;
+          }
+
+          await sleep(
+            RETRY_DELAYS[attempt]
           );
         }
-
-        callback(
-          lastError
-        );
-      } finally {
-        releaseGlobalSlot();
       }
+
+      throw lastError;
+    } finally {
+      releaseGlobalSlot();
     }
+  });
+}
+
+/*
+ * ============================================================
+ * BANAT COMMAND SYSTEM
+ * ============================================================
+ */
+
+function isBanatCommand(body) {
+  const text = String(body || "")
+    .trim()
+    .toLowerCase();
+
+  return (
+    text === "/banat" ||
+    text.startsWith("/banat ")
   );
 }
 
-function isBanatCommand(
-  body
-) {
-  return /^!(?:banat|troll)(?:\s|$)/i.test(
-    String(
-      body || ""
-    ).trim()
+function commandSendMessage(api, message, threadID) {
+  return trafficSendMessage(
+    api,
+    message,
+    threadID
   );
 }
 
-function commandSendMessage(
-  api,
-  message,
-  threadID,
-  replyToMessageID = null
-) {
-  return new Promise(
-    (
-      resolve,
-      reject
-    ) => {
-      let settled =
-        false;
-
-      const done = (
-        err,
-        info
-      ) => {
-        if (
-          settled
-        ) {
-          return;
-        }
-
-        settled =
-          true;
-
-        if (err) {
-          reject(
-            err
-          );
-        } else {
-          resolve(
-            info
-          );
-        }
-      };
-
-      try {
-        const returned =
-          replyToMessageID
-            ? api.sendMessage(
-                message,
-                threadID,
-                done,
-                replyToMessageID
-              )
-            : api.sendMessage(
-                message,
-                threadID,
-                done
-              );
-
-        if (
-          returned &&
-          typeof returned.then ===
-            "function"
-        ) {
-          returned
-            .then(
-              info =>
-                done(
-                  null,
-                  info
-                )
-            )
-            .catch(
-              done
-            );
-        }
-      } catch (
-        error
-      ) {
-        done(
-          error
-        );
-      }
-    }
-  );
-}
-
-function sendCommandReply(
+async function sendCommandReply(
   api,
   event,
   message
 ) {
-  const threadID =
-    String(
-      event.threadID
-    );
+  if (!message) return;
 
-  commandSendMessage(
+  return commandSendMessage(
     api,
     message,
-    threadID,
-    event.messageID ||
-      null
-  )
-    .then(() =>
-      console.log(
-        `[BANAT] command reply sent: ${message}`
-      )
-    )
-    .catch(
-      error =>
-        console.error(
-          "[BANAT] command reply failed:",
-          error?.message ||
-            error
-        )
-    );
+    event.threadID
+  );
 }
 
-function handleBanatCommand(
+async function handleBanatCommand(
   api,
   event,
   body
 ) {
-  const threadID =
-    String(
-      event.threadID
-    );
+  const parts = String(body || "")
+    .trim()
+    .split(/\s+/);
 
-  const senderID =
-    String(
-      event.senderID ||
-        ""
-    );
-
-  const parts =
-    String(body)
-      .trim()
-      .split(/\s+/);
-
-  const cmd = (
-    parts[0] ||
-    ""
+  const command = (
+    parts[0] || ""
   ).toLowerCase();
 
-  const sub = (
-    parts[1] ||
-    "status"
+  if (command !== "/banat") {
+    return false;
+  }
+
+  const action = (
+    parts[1] || ""
   ).toLowerCase();
+
+  const threadID = String(
+    event.threadID
+  );
 
   if (
-    cmd === "!troll"
+    event.senderID &&
+    String(event.senderID) ===
+      String(ADMIN_UID)
   ) {
-    if (
-      senderID !==
-      ADMIN_UID
-    ) {
-      sendCommandReply(
+    if (action === "on") {
+      activeThreads.add(threadID);
+
+      setBanatConversationMode(
+        threadID,
+        true,
+        event.senderID
+      );
+
+      await sendCommandReply(
         api,
         event,
-        "❌ Hoy, hindi ka admin! Tigil-tigilan mo yan."
+        "Banat mode: ON."
       );
 
       return true;
     }
 
-    const targetUID =
-      parts[1] ||
-      "wala";
+    if (action === "off") {
+      activeThreads.delete(threadID);
 
-    sendCommandReply(
-      api,
-      event,
-      `👑 Admin access granted. Na-troll ang target ID: ${targetUID}`
-    );
-
-    return true;
-  }
-
-  if (
-    sub === "on" ||
-    sub === "enable" ||
-    sub === "start"
-  ) {
-    setBanatConversationMode(
-      threadID,
-      true,
-      event.senderID
-    );
-
-    activeThreads.add(
-      threadID
-    );
-
-    console.log(
-      `[BANAT] activated thread ${threadID} by ${
-        event.senderID ||
-        "unknown"
-      }`
-    );
-
-    sendCommandReply(
-      api,
-      event,
-      "banat is on. say whatever u want 😭"
-    );
-
-    return true;
-  }
-
-  if (
-    sub === "off" ||
-    sub === "disable" ||
-    sub === "stop"
-  ) {
-    setBanatConversationMode(
-      threadID,
-      false
-    );
-
-    activeThreads.delete(
-      threadID
-    );
-
-    console.log(
-      `[BANAT] deactivated thread ${threadID}`
-    );
-
-    sendCommandReply(
-      api,
-      event,
-      "banat off. peace 😭"
-    );
-
-    return true;
-  }
-
-  if (
-    sub === "toggle"
-  ) {
-    const next =
-      !isBanatConversationModeActive(
-        threadID
+      setBanatConversationMode(
+        threadID,
+        false,
+        event.senderID
       );
 
-    setBanatConversationMode(
-      threadID,
-      next,
-      event.senderID
-    );
+      await sendCommandReply(
+        api,
+        event,
+        "Banat mode: OFF."
+      );
 
-    if (next) {
-      activeThreads.add(
-        threadID
-      );
-    } else {
-      activeThreads.delete(
-        threadID
-      );
+      return true;
     }
 
-    sendCommandReply(
-      api,
-      event,
-      next
-        ? "banat is on 😭"
-        : "banat is off"
-    );
+    if (action === "status") {
+      const status =
+        activeThreads.has(threadID);
 
-    return true;
-  }
-
-  if (
-    sub === "status"
-  ) {
-    const on =
-      activeThreads.has(
-        threadID
-      ) ||
-      isBanatConversationModeActive(
-        threadID
+      await sendCommandReply(
+        api,
+        event,
+        `Banat mode: ${
+          status ? "ON" : "OFF"
+        }`
       );
 
-    sendCommandReply(
-      api,
-      event,
-      on
-        ? "banat: ON 🟢"
-        : "banat: OFF 🔴"
-    );
-
-    return true;
+      return true;
+    }
   }
 
-  if (
-    sub === "help"
-  ) {
-    sendCommandReply(
-      api,
-      event,
-      "!banat on · !banat off · !banat toggle · !banat status · !troll [uid]"
-    );
-
-    return true;
-  }
-
-  sendCommandReply(
-    api,
-    event,
-    "unknown banat command. use !banat help"
-  );
-
-  return true;
+  return false;
 }
+
+/*
+ * ============================================================
+ * BANAT MESSAGE HANDLER
+ * ============================================================
+ */
 
 async function sendBanat(
   api,
   event,
-  text
+  reply
 ) {
-  return sendBanatReplyWithTyping(
-    api,
-    text,
-    String(
-      event.threadID
-    ),
-    event.messageID ||
-      null,
-    {
-      trafficSendMessage,
-      incomingText:
-        event.body || ""
+  if (!reply) return;
+
+  if (
+    typeof sendBanatReplyWithTyping ===
+    "function"
+  ) {
+    try {
+      return await sendBanatReplyWithTyping(
+        api,
+        event,
+        reply,
+        trafficSendMessage
+      );
+    } catch (error) {
+      console.error(
+        "[BANAT HUMAN]",
+        error.message
+      );
     }
+  }
+
+  return trafficSendMessage(
+    api,
+    reply,
+    event.threadID
   );
 }
 
-function onMessage(
-  api,
-  event
-) {
-  if (!event) {
-    return;
-  }
+function onMessage(api, event) {
+  if (!event) return;
 
-  if (
-    event.type &&
-    event.type !==
-      "message"
-  ) {
-    return;
-  }
-
+  /*
+   * Ignore bot's own messages
+   */
   if (
     event.senderID &&
     botUserID &&
-    String(
-      event.senderID
-    ) ===
-      String(
-        botUserID
-      )
+    String(event.senderID) ===
+      String(botUserID)
   ) {
     return;
   }
 
-  const body =
-    String(
-      event.body || ""
-    ).trim();
+  const body = String(
+    event.body || ""
+  ).trim();
 
-  if (!body) {
-    return;
+  /*
+   * ==========================================================
+   * NICKNAME / GC NAME COMMANDS
+   * ==========================================================
+   *
+   * These are checked before normal message processing.
+   */
+
+  if (body) {
+    try {
+      if (
+        handleNicknameCommand(
+          api,
+          event,
+          body
+        )
+      ) {
+        return;
+      }
+    } catch (error) {
+      console.error(
+        "[NICKNAME COMMAND]",
+        error.message
+      );
+    }
+
+    try {
+      if (
+        handleGCNameCommand(
+          api,
+          event,
+          body
+        )
+      ) {
+        return;
+      }
+    } catch (error) {
+      console.error(
+        "[GC NAME COMMAND]",
+        error.message
+      );
+    }
   }
 
+  /*
+   * Existing message filter
+   */
   if (
-    isBanatCommand(
-      body
-    )
+    event.type &&
+    event.type !== "message"
   ) {
+    return;
+  }
+
+  if (!body) return;
+
+  /*
+   * ==========================================================
+   * EXISTING BANAT COMMANDS
+   * ==========================================================
+   */
+
+  if (isBanatCommand(body)) {
     handleBanatCommand(
       api,
       event,
       body
-    );
+    ).catch(error => {
+      console.error(
+        "[BANAT COMMAND]",
+        error.message
+      );
+    });
 
     return;
   }
 
-  const threadID =
-    String(
-      event.threadID
-    );
+  const threadID = String(
+    event.threadID || ""
+  );
 
-  const active =
-    activeThreads.has(
-      threadID
-    ) ||
+  if (!threadID) return;
+
+  /*
+   * ==========================================================
+   * EXISTING TARGET CLASSIFICATION
+   * ==========================================================
+   */
+
+  let targetInfo = null;
+
+  try {
+    targetInfo = classifyBanatTarget(
+      event,
+      botUserID
+    );
+  } catch (error) {
+    console.error(
+      "[TARGET CLASSIFY]",
+      error.message
+    );
+  }
+
+  /*
+   * ==========================================================
+   * EXISTING ACTIVE MODE
+   * ==========================================================
+   */
+
+  const modeActive =
+    activeThreads.has(threadID) ||
     isBanatConversationModeActive(
       threadID
     );
 
-  const target =
-    classifyBanatTarget(
-      {
-        event,
-        body,
-        botID:
-          botUserID
-      }
-    );
-
-  if (active) {
-    const reply =
+  if (
+    !modeActive &&
+    !targetInfo?.isTarget
+  ) {
+    /*
+     * Trigger replies can still work here.
+     */
+    const triggerReply =
       getTriggerReply(
         body,
         threadID
-      ) ||
-      getBanatConversationReply(
-        body,
-        threadID
       );
 
-    if (reply) {
+    if (triggerReply) {
       sendBanat(
         api,
         event,
-        reply
-      ).catch(
-        error =>
-          console.error(
-            "[BANAT] reply error:",
-            error
-          )
-      );
+        triggerReply
+      ).catch(error => {
+        console.error(
+          "[TRIGGER SEND]",
+          error.message
+        );
+      });
     }
 
     return;
   }
 
-  if (
-    target.shouldRespond
-  ) {
-    const reply =
-      getTriggerReply(
-        body,
-        threadID
-      ) ||
-      getBanatConversationReply(
-        body,
-        threadID
-      );
+  /*
+   * ==========================================================
+   * TRIGGER REPLY
+   * ==========================================================
+   */
 
-    if (reply) {
-      sendBanat(
-        api,
-        event,
-        reply
-      ).catch(
-        error =>
-          console.error(
-            "[BANAT]",
-            error
-          )
+  const triggerReply =
+    getTriggerReply(
+      body,
+      threadID
+    );
+
+  if (triggerReply) {
+    sendBanat(
+      api,
+      event,
+      triggerReply
+    ).catch(error => {
+      console.error(
+        "[TRIGGER SEND]",
+        error.message
       );
-    }
+    });
+
+    return;
+  }
+
+  /*
+   * ==========================================================
+   * HUMAN BANAT CONVERSATION
+   * ==========================================================
+   */
+
+  const banatReply =
+    getBanatConversationReply(
+      body,
+      threadID
+    );
+
+  if (banatReply) {
+    sendBanat(
+      api,
+      event,
+      banatReply
+    ).catch(error => {
+      console.error(
+        "[BANAT SEND]",
+        error.message
+      );
+    });
   }
 }
 
 /*
  * ============================================================
- * START BOT LISTENER
+ * START BOT
  * ============================================================
  */
 
 function start(api) {
-  botApi =
-    api;
+  botApi = api;
 
-  botStatus =
-    "ONLINE";
-
-  botError =
-    "";
-
-  botLoginAt =
-    Date.now();
+  botStatus = "online";
+  botError = null;
+  botConnecting = false;
+  botLoginAt = Date.now();
 
   try {
     botUserID =
-      String(
-        api.getCurrentUserID?.() ||
-          ""
-      );
+      api.getCurrentUserID();
   } catch (_) {
-    botUserID =
-      "";
+    botUserID = null;
   }
 
-  if (
-    DEFAULT_ON
-  ) {
+  console.log(
+    `[BOT] Logged in as ${botUserID || "unknown"}`
+  );
+
+  /*
+   * Default banat mode
+   */
+  if (DEFAULT_ON) {
     console.log(
-      "[BANAT] BANAT_DEFAULT_ON enabled."
+      "[BANAT] Default mode enabled."
     );
   }
 
-  api.listenMqtt(
-    (
-      error,
-      event
-    ) => {
-      if (error) {
-        console.error(
-          "[BANAT] listener error:",
-          error
-        );
+  /*
+   * ==========================================================
+   * MQTT LISTENER
+   * ==========================================================
+   */
 
+  api.listenMqtt(
+    (error, event) => {
+      if (error) {
+        botStatus = "error";
         botError =
+          error?.errorDescription ||
           error?.message ||
           String(error);
+
+        console.error(
+          "[MQTT]",
+          botError
+        );
 
         return;
       }
 
       try {
+        /*
+         * ======================================================
+         * NICKNAME PROTECTION
+         * ======================================================
+         */
+
+        if (
+          event &&
+          event.threadID
+        ) {
+          Promise.resolve(
+            protectNickname(
+              api,
+              event
+            )
+          ).catch(error => {
+            console.error(
+              "[NICKNAME PROTECTION]",
+              error.message
+            );
+          });
+        }
+
+        /*
+         * ======================================================
+         * GC NAME PROTECTION
+         * ======================================================
+         */
+
+        if (
+          event &&
+          event.threadID
+        ) {
+          Promise.resolve(
+            protectGCName(
+              api,
+              event
+            )
+          ).catch(error => {
+            console.error(
+              "[GC NAME PROTECTION]",
+              error.message
+            );
+          });
+        }
+
+        /*
+         * ======================================================
+         * DEFAULT BANAT MODE
+         * ======================================================
+         */
+
         if (
           DEFAULT_ON &&
           event?.threadID &&
           event?.senderID &&
-          String(
-            event.senderID
-          ) !==
-            botUserID
+          String(event.senderID) !==
+            String(botUserID)
         ) {
-          const key =
-            String(
-              event.threadID
-            );
+          const key = String(
+            event.threadID
+          );
 
           if (
-            !activeThreads.has(
-              key
-            )
+            !activeThreads.has(key)
           ) {
-            activeThreads.add(
-              key
-            );
+            activeThreads.add(key);
 
-            setBanatConversationMode(
-              key,
-              true,
-              event.senderID
-            );
+            try {
+              setBanatConversationMode(
+                key,
+                true,
+                event.senderID
+              );
+            } catch (error) {
+              console.error(
+                "[BANAT MODE]",
+                error.message
+              );
+            }
           }
         }
+
+        /*
+         * ======================================================
+         * NORMAL MESSAGE HANDLER
+         * ======================================================
+         */
 
         onMessage(
           api,
           event
         );
-      } catch (
-        error
-      ) {
+      } catch (handlerError) {
         console.error(
-          "[BANAT] message handler error:",
-          error
+          "[EVENT HANDLER]",
+          handlerError
         );
       }
     }
-  );
-
-  console.log(
-    `[BANAT] online${
-      botUserID
-        ? ` as ${botUserID}`
-        : ""
-    }`
   );
 }
 
@@ -1324,387 +1035,259 @@ function start(api) {
  * ============================================================
  */
 
-async function loginBot(
-  sessionValue
-) {
-  if (
-    botConnecting
-  ) {
+async function loginBot(sessionValue) {
+  if (botConnecting) {
     throw new Error(
       "Bot login is already in progress."
     );
   }
 
-  botConnecting =
-    true;
+  const normalized =
+    parseSessionInput(
+      sessionValue
+    );
 
-  botStatus =
-    "CONNECTING";
+  if (!normalized) {
+    throw new Error(
+      "Invalid AppState / C3C session."
+    );
+  }
 
-  botError =
-    "";
+  botConnecting = true;
+  botStatus = "connecting";
+  botError = null;
 
-  botName =
-    "";
-
-  botUserID =
-    "";
+  console.log(
+    "[BOT] Attempting Messenger login..."
+  );
 
   try {
-    const cookie =
-      normalizeSession(
-        sessionValue
-      );
+    const api = await new Promise(
+      (resolve, reject) => {
+        let finished = false;
 
-    console.log(
-      "[BOT LOGIN] Validating Facebook session..."
-    );
+        function done(
+          error,
+          result
+        ) {
+          if (finished) return;
 
-    const api =
-      await new Promise(
-        (
-          resolve,
-          reject
-        ) => {
-          login(
-            cookie,
-            (
-              error,
-              api
-            ) => {
-              if (error) {
-                reject(
-                  error
-                );
+          finished = true;
 
-                return;
-              }
+          if (error) {
+            reject(error);
+            return;
+          }
 
-              resolve(
-                api
-              );
-            }
-          );
+          if (!result) {
+            reject(
+              new Error(
+                "Messenger login returned no API."
+              )
+            );
+
+            return;
+          }
+
+          resolve(result);
         }
-      );
 
-    await getBotAccountInfo(
-      api
+        try {
+          /*
+           * ws3-fca supports cookie/AppState-style
+           * session login through the login function.
+           */
+          login(
+            normalized,
+            done
+          );
+        } catch (error) {
+          done(error);
+        }
+      }
     );
 
-    if (!botUserID) {
-      throw new Error(
-        "Login succeeded but bot UID could not be detected."
-      );
-    }
+    botApi = api;
 
-    botApi =
-      api;
+    const account =
+      await getBotAccountInfo(api);
 
-    start(
-      api
-    );
+    botUserID = account.uid;
+    botName = account.name;
 
-    botStatus =
-      "ONLINE";
+    /*
+     * Save only after successful login.
+     */
+    saveSession(normalized);
+
+    start(api);
+
+    botStatus = "online";
+    botError = null;
+    botLoginAt = Date.now();
 
     console.log(
-      `[BOT LOGIN] SUCCESS: ${
-        botName ||
-        "Unknown"
-      } (${botUserID})`
+      `[BOT] Online: ${botName} (${botUserID})`
     );
 
     return {
-      name:
-        botName ||
-        "Unknown",
-
-      uid:
-        botUserID,
-
-      status:
-        "ONLINE"
+      success: true,
+      name: botName,
+      uid: botUserID,
+      status: botStatus
     };
-  } catch (
-    error
-  ) {
-    botApi =
-      null;
-
-    botUserID =
-      "";
-
-    botName =
-      "";
-
-    botStatus =
-      "OFFLINE";
-
+  } catch (error) {
+    botApi = null;
+    botUserID = null;
+    botName = "Not logged in";
+    botStatus = "offline";
     botError =
+      error?.errorDescription ||
       error?.message ||
       String(error);
 
     console.error(
-      "[BOT LOGIN] FAILED:",
-      error
+      "[BOT LOGIN FAILED]",
+      botError
     );
 
     throw error;
   } finally {
-    botConnecting =
-      false;
+    botConnecting = false;
   }
 }
 
 /*
  * ============================================================
- * EXPRESS DASHBOARD
+ * DASHBOARD AUTH
  * ============================================================
  */
 
-const app =
-  express();
-
-/*
- * Important for Render/Railway reverse proxy.
- */
-app.set(
-  "trust proxy",
-  1
-);
-
-app.use(
-  express.urlencoded(
-    {
-      extended: true,
-      limit: "2mb"
-    }
-  )
-);
-
-app.use(
-  express.json(
-    {
-      limit: "2mb"
-    }
-  )
-);
-
-app.use(
-  session(
-    {
-      secret:
-        "banat_dashboard_secret_key_12345",
-
-      resave:
-        false,
-
-      saveUninitialized:
-        false,
-
-      cookie: {
-        httpOnly:
-          true,
-
-        sameSite:
-          "lax",
-
-        secure:
-          true
-      }
-    }
-  )
-);
-
-function requireAuth(
-  req,
-  res,
-  next
-) {
-  if (
-    req.session &&
-    req.session.isAdmin
-  ) {
+function requireAuth(req, res, next) {
+  if (req.session?.authenticated) {
     return next();
   }
 
-  res.redirect(
-    "/login"
-  );
+  return res.redirect("/login");
 }
 
 /*
  * ============================================================
- * ROOT
+ * LOGIN PAGE
  * ============================================================
  */
 
-app.get(
-  "/",
-  (
-    req,
-    res
-  ) => {
-    if (
-      req.session &&
-      req.session.isAdmin
-    ) {
-      return res.redirect(
-        "/dashboard"
-      );
-    }
-
-    res.redirect(
-      "/login"
-    );
+app.get("/login", (req, res) => {
+  if (req.session?.authenticated) {
+    return res.redirect("/dashboard");
   }
-);
 
-/*
- * ============================================================
- * ADMIN LOGIN PAGE
- * ============================================================
- */
-
-app.get(
-  "/login",
-  (
-    req,
-    res
-  ) => {
-    res.send(`
-<!doctype html>
-<html>
+  res.send(`
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport"
-content="width=device-width,initial-scale=1">
+      content="width=device-width, initial-scale=1.0">
 
-<title>Bot Dashboard Login</title>
+<title>SINZU AI — Login</title>
 
 <style>
-
-*{
-  box-sizing:border-box;
+* {
+  box-sizing: border-box;
 }
 
-body{
-  margin:0;
-  min-height:100vh;
-
-  display:flex;
-  align-items:center;
-  justify-content:center;
-
-  background:#080b10;
-  color:#fff;
-
-  font-family:Arial,sans-serif;
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #080808;
+  color: #fff;
+  font-family: Arial, sans-serif;
 }
 
-.card{
-  width:92%;
-  max-width:380px;
-
-  background:#111722;
-
-  border:1px solid #263142;
-  border-radius:18px;
-
-  padding:28px;
-
-  box-shadow:
-    0 20px 60px #000;
+.box {
+  width: min(420px, 92%);
+  padding: 30px;
+  background: #111;
+  border: 1px solid #292929;
+  border-radius: 14px;
+  box-shadow: 0 15px 50px rgba(0,0,0,.5);
 }
 
-h1{
-  margin:0 0 8px;
-  font-size:25px;
+h1 {
+  margin: 0 0 8px;
+  font-size: 25px;
 }
 
-p{
-  color:#94a3b8;
-  font-size:14px;
+p {
+  color: #888;
+  margin-bottom: 25px;
 }
 
-input{
-  width:100%;
-
-  padding:13px;
-
-  margin:7px 0;
-
-  border-radius:10px;
-
-  border:1px solid #334155;
-
-  background:#090d14;
-
-  color:#fff;
-
-  outline:none;
+input {
+  width: 100%;
+  padding: 13px;
+  margin-bottom: 12px;
+  background: #080808;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 8px;
+  outline: none;
 }
 
-button{
-  width:100%;
-
-  padding:13px;
-
-  margin-top:10px;
-
-  border:0;
-
-  border-radius:10px;
-
-  background:#2563eb;
-
-  color:#fff;
-
-  font-weight:bold;
-
-  cursor:pointer;
+button {
+  width: 100%;
+  padding: 13px;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  color: #000;
+  font-weight: bold;
+  cursor: pointer;
 }
 
-button:hover{
-  opacity:.9;
+.error {
+  color: #ff6565;
+  margin-bottom: 15px;
 }
-
 </style>
 </head>
 
 <body>
 
-<div class="card">
+<div class="box">
 
-<h1>Bot Control Panel</h1>
+<h1>SINZU AI COMMAND CENTER</h1>
 
-<p>
-Admin login para ma-access ang bot dashboard.
-</p>
+<p>Dashboard authentication</p>
 
-<form
-method="POST"
-action="/login"
+${req.query.error
+  ? `<div class="error">Invalid username or password.</div>`
+  : ""}
+
+<form method="POST" action="/login">
+
+<input
+  type="text"
+  name="username"
+  placeholder="Username"
+  autocomplete="username"
+  required
 >
 
 <input
-name="username"
-placeholder="Dashboard username"
-autocomplete="username"
-required
->
-
-<input
-type="password"
-name="password"
-placeholder="Dashboard password"
-autocomplete="current-password"
-required
+  type="password"
+  name="password"
+  placeholder="Password"
+  autocomplete="current-password"
+  required
 >
 
 <button type="submit">
-Login
+  LOGIN
 </button>
 
 </form>
@@ -1713,84 +1296,50 @@ Login
 
 </body>
 </html>
-`);
-  }
-);
+  `);
+});
 
 /*
  * ============================================================
- * ADMIN LOGIN ACTION
+ * LOGIN POST
  * ============================================================
  */
 
-app.post(
-  "/login",
-  (
-    req,
-    res
-  ) => {
-    const {
-      username,
-      password
-    } = req.body;
+app.post("/login", (req, res) => {
+  const username =
+    String(req.body.username || "");
 
-    if (
-      username ===
-        ADMIN_USER &&
-      password ===
-        ADMIN_PASS
-    ) {
-      req.session.isAdmin =
-        true;
+  const password =
+    String(req.body.password || "");
 
-      return req.session.save(
-        () => {
-          res.redirect(
-            "/dashboard"
-          );
-        }
+  if (
+    username === ADMIN_USER &&
+    password === ADMIN_PASS
+  ) {
+    req.session.authenticated = true;
+
+    return req.session.save(error => {
+      if (error) {
+        console.error(
+          "[SESSION SAVE]",
+          error
+        );
+
+        return res.status(500).send(
+          "Session error."
+        );
+      }
+
+      return res.redirect(
+        "/dashboard"
       );
-    }
-
-    res.status(
-      401
-    ).send(`
-<!doctype html>
-<html>
-<head>
-<meta name="viewport"
-content="width=device-width,initial-scale=1">
-<title>Login Failed</title>
-</head>
-
-<body
-style="
-background:#080b10;
-color:white;
-font-family:Arial;
-text-align:center;
-padding-top:100px;
-"
->
-
-<h2>❌ Wrong Login</h2>
-
-<p>
-Wrong dashboard username or password.
-</p>
-
-<a
-href="/login"
-style="color:#60a5fa"
->
-Try Again
-</a>
-
-</body>
-</html>
-`);
+    });
   }
-);
+
+  return res.redirect(
+    "/login?error=1"
+  );
+});
 
 /*
  * ============================================================
@@ -1801,262 +1350,149 @@ Try Again
 app.get(
   "/dashboard",
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-    const online =
-      botStatus ===
-      "ONLINE";
-
-    const statusColor =
-      online
-        ? "#22c55e"
-        : botStatus ===
-          "CONNECTING"
-          ? "#f59e0b"
-          : "#ef4444";
-
+  (req, res) => {
     res.send(`
-<!doctype html>
-
-<html>
-
+<!DOCTYPE html>
+<html lang="en">
 <head>
 
-<meta charset="utf-8">
+<meta charset="UTF-8">
 
 <meta
-name="viewport"
-content="width=device-width,initial-scale=1"
+  name="viewport"
+  content="width=device-width, initial-scale=1.0"
 >
 
-<meta
-http-equiv="refresh"
-content="15"
->
-
-<title>Bot Dashboard</title>
+<title>SINZU AI — Dashboard</title>
 
 <style>
 
-*{
-  box-sizing:border-box;
+* {
+  box-sizing: border-box;
 }
 
-body{
-  margin:0;
-
-  background:#070a0f;
-
-  color:#f8fafc;
-
-  font-family:Arial,sans-serif;
+body {
+  margin: 0;
+  background: #080808;
+  color: #fff;
+  font-family: Arial, sans-serif;
 }
 
-.container{
-  width:94%;
-
-  max-width:850px;
-
-  margin:25px auto;
+.container {
+  width: min(900px, 94%);
+  margin: 35px auto;
 }
 
-.header{
-  display:flex;
-
-  justify-content:space-between;
-
-  align-items:center;
-
-  gap:10px;
-
-  margin-bottom:20px;
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 25px;
 }
 
-h1{
-  margin:0;
-
-  font-size:25px;
+.title {
+  font-size: 26px;
+  font-weight: bold;
 }
 
-.card{
-  background:#101722;
-
-  border:1px solid #263244;
-
-  border-radius:16px;
-
-  padding:20px;
-
-  margin-bottom:16px;
+.subtitle {
+  color: #777;
+  margin-top: 5px;
 }
 
-.title{
-  font-weight:bold;
-
-  font-size:17px;
-
-  margin-bottom:15px;
+.logout {
+  text-decoration: none;
+  color: #fff;
+  border: 1px solid #333;
+  padding: 10px 14px;
+  border-radius: 8px;
 }
 
-.status{
-  display:inline-flex;
-
-  align-items:center;
-
-  gap:8px;
-
-  padding:7px 11px;
-
-  border-radius:999px;
-
-  background:#0b111b;
-
-  border:1px solid #263244;
-
-  font-size:13px;
-}
-
-.dot{
-  width:9px;
-
-  height:9px;
-
-  border-radius:50%;
-
-  background:${statusColor};
-}
-
-.account{
-  display:grid;
-
+.grid {
+  display: grid;
   grid-template-columns:
-    1fr 1fr;
-
-  gap:12px;
+    repeat(auto-fit, minmax(220px, 1fr));
+  gap: 15px;
 }
 
-.info{
-  background:#0a0f17;
-
-  border:1px solid #1e293b;
-
-  border-radius:12px;
-
-  padding:14px;
+.card {
+  background: #111;
+  border: 1px solid #292929;
+  border-radius: 14px;
+  padding: 20px;
 }
 
-.label{
-  color:#64748b;
-
-  font-size:12px;
-
-  margin-bottom:5px;
+.label {
+  color: #777;
+  font-size: 13px;
+  margin-bottom: 8px;
 }
 
-.value{
-  font-weight:bold;
-
-  word-break:break-word;
+.value {
+  font-size: 20px;
+  font-weight: bold;
+  word-break: break-word;
 }
 
-textarea{
-  width:100%;
-
-  height:190px;
-
-  resize:vertical;
-
-  padding:13px;
-
-  background:#080c13;
-
-  color:#dbeafe;
-
-  border:1px solid #334155;
-
-  border-radius:11px;
-
-  font-family:monospace;
-
-  font-size:12px;
-
-  outline:none;
+.online {
+  color: #65ff91;
 }
 
-button{
-  border:0;
-
-  border-radius:10px;
-
-  padding:12px 17px;
-
-  margin-top:10px;
-
-  color:#fff;
-
-  background:#2563eb;
-
-  font-weight:bold;
-
-  cursor:pointer;
+.offline {
+  color: #ff6565;
 }
 
-button:hover{
-  opacity:.9;
+.connecting {
+  color: #ffd45f;
 }
 
-.logout{
-  background:#dc2626;
+textarea {
+  width: 100%;
+  min-height: 230px;
+  resize: vertical;
+  background: #080808;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 14px;
+  font-family: monospace;
+  outline: none;
 }
 
-.note{
-  color:#94a3b8;
-
-  font-size:13px;
-
-  line-height:1.5;
+button {
+  border: 0;
+  padding: 12px 17px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
 }
 
-.warning{
-  padding:12px;
-
-  border-radius:10px;
-
-  background:#291a08;
-
-  border:1px solid #854d0e;
-
-  color:#fbbf24;
-
-  font-size:13px;
-
-  margin-top:12px;
+.login-btn {
+  background: #fff;
+  color: #000;
 }
 
-.error{
-  padding:12px;
-
-  border-radius:10px;
-
-  background:#2a0b0b;
-
-  border:1px solid #7f1d1d;
-
-  color:#fca5a5;
-
-  font-size:13px;
-
-  margin-top:12px;
+.logout-btn {
+  background: #351111;
+  color: #ff8888;
 }
 
-@media(max-width:600px){
+.status-box {
+  margin-top: 20px;
+  padding: 15px;
+  background: #0d0d0d;
+  border: 1px solid #292929;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
-  .account{
-    grid-template-columns:1fr;
-  }
-
+.warning {
+  color: #ffcc66;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 12px;
 }
 
 </style>
@@ -2070,664 +1506,335 @@ button:hover{
 <div class="header">
 
 <div>
+  <div class="title">
+    SINZU AI COMMAND CENTER
+  </div>
 
-<h1>
-Bot Control Panel
-</h1>
-
-<div class="note">
-Messenger Bot Management
+  <div class="subtitle">
+    Messenger Bot Dashboard
+  </div>
 </div>
 
-</div>
-
-<a href="/logout">
-
-<button class="logout">
-Logout
-</button>
-
+<a
+  class="logout"
+  href="/logout"
+>
+  Logout
 </a>
 
 </div>
 
-<!-- STATUS -->
+<div class="grid">
 
 <div class="card">
-
-<div class="title">
-Messenger Status
+  <div class="label">BOT ACCOUNT</div>
+  <div
+    class="value"
+    id="botName"
+  >
+    Loading...
+  </div>
 </div>
-
-<div class="status">
-
-<span class="dot"></span>
-
-${escapeHtml(
-  botStatus
-)}
-
-</div>
-
-</div>
-
-<!-- ACCOUNT -->
 
 <div class="card">
-
-<div class="title">
-Bot Account
+  <div class="label">BOT UID</div>
+  <div
+    class="value"
+    id="botUID"
+  >
+    Loading...
+  </div>
 </div>
-
-<div class="account">
-
-<div class="info">
-
-<div class="label">
-ACCOUNT NAME
-</div>
-
-<div class="value">
-
-${
-  online
-    ? escapeHtml(
-        botName ||
-          "Loading..."
-      )
-    : "Not logged in"
-}
-
-</div>
-
-</div>
-
-<div class="info">
-
-<div class="label">
-BOT UID
-</div>
-
-<div class="value">
-
-${
-  online
-    ? escapeHtml(
-        botUserID
-      )
-    : "—"
-}
-
-</div>
-
-</div>
-
-<div class="info">
-
-<div class="label">
-MESSENGER
-</div>
-
-<div class="value">
-
-${
-  online
-    ? "🟢 Logged In"
-    : botStatus ===
-      "CONNECTING"
-      ? "🟡 Connecting..."
-      : "🔴 Logged Out"
-}
-
-</div>
-
-</div>
-
-<div class="info">
-
-<div class="label">
-PROCESS UPTIME
-</div>
-
-<div class="value">
-${uptimeText()}
-</div>
-
-</div>
-
-</div>
-
-${
-  botError
-    ? `
-<div class="error">
-
-${escapeHtml(
-  botError
-)}
-
-</div>
-`
-    : ""
-}
-
-</div>
-
-<!-- BOT LOGIN -->
 
 <div class="card">
-
-<div class="title">
-Login Bot
+  <div class="label">MESSENGER STATUS</div>
+  <div
+    class="value"
+    id="botStatus"
+  >
+    Loading...
+  </div>
 </div>
 
-<p class="note">
+<div class="card">
+  <div class="label">UPTIME</div>
+  <div
+    class="value"
+    id="uptime"
+  >
+    Loading...
+  </div>
+</div>
 
-I-paste dito ang Facebook
-AppState/C3C session JSON.
+</div>
 
-Kapag valid, automatic na
-ita-try i-login ang bot.
+<div class="card" style="margin-top:15px;">
 
-Pag successful, makikita mo
-ang account name, UID, at
-Messenger status.
+<h2>Facebook / Messenger Login</h2>
 
+<p style="color:#777;">
+Paste your AppState/C3C session below.
 </p>
 
-<form
-method="POST"
-action="/bot-login"
->
-
 <textarea
-name="appstate"
-placeholder='[{"key":"c_user","value":"..."},{"key":"xs","value":"..."}]'
-required
+  id="appstate"
+  placeholder='Paste AppState JSON or cookie/session value here...'
 ></textarea>
 
-<button
-type="submit"
->
-🔐 Login Bot
-</button>
-
-</form>
-
 <div class="warning">
-
-Huwag mag-paste ng Facebook
-password.
-
-AppState/C3C session lamang.
-
-Huwag ding i-share ang
-session sa ibang tao.
-
+Keep your AppState/C3C private. Anyone who obtains a
+valid session may potentially access the account.
 </div>
 
-</div>
-
-<!-- BOT CONTROLS -->
-
-<div class="card">
-
-<div class="title">
-Bot Controls
-</div>
-
-<form
-method="POST"
-action="/bot-logout"
->
+<br>
 
 <button
-type="submit"
-style="background:#dc2626"
+  class="login-btn"
+  onclick="loginBot()"
 >
-
-Logout Bot
-
+  LOGIN BOT
 </button>
 
-</form>
+<button
+  class="logout-btn"
+  onclick="logoutBot()"
+  style="margin-left:8px;"
+>
+  BOT LOGOUT
+</button>
 
-</div>
-
-<!-- SYSTEM -->
-
-<div class="card">
-
-<div class="title">
-System
-</div>
-
-<div class="account">
-
-<div class="info">
-
-<div class="label">
-NODE
-</div>
-
-<div class="value">
-
-${escapeHtml(
-  process.version
-)}
-
-</div>
-
-</div>
-
-<div class="info">
-
-<div class="label">
-PLATFORM
-</div>
-
-<div class="value">
-
-${escapeHtml(
-  process.platform
-)}
-
-</div>
-
-</div>
-
-<div class="info">
-
-<div class="label">
-ARCHITECTURE
-</div>
-
-<div class="value">
-
-${escapeHtml(
-  process.arch
-)}
-
-</div>
-
-</div>
-
-<div class="info">
-
-<div class="label">
-ACTIVE THREADS
-</div>
-
-<div class="value">
-
-${activeThreads.size}
-
+<div
+  class="status-box"
+  id="message"
+>
+Ready.
 </div>
 
 </div>
 
 </div>
 
-</div>
+<script>
 
-</div>
+async function refreshStatus() {
+
+  try {
+
+    const response =
+      await fetch("/api/status");
+
+    const data =
+      await response.json();
+
+    const name =
+      document.getElementById("botName");
+
+    const uid =
+      document.getElementById("botUID");
+
+    const status =
+      document.getElementById("botStatus");
+
+    const uptime =
+      document.getElementById("uptime");
+
+    name.textContent =
+      data.name || "Not logged in";
+
+    uid.textContent =
+      data.uid || "—";
+
+    status.textContent =
+      data.status || "offline";
+
+    uptime.textContent =
+      data.uptime || "0s";
+
+    status.className =
+      "value " +
+      (
+        data.status === "online"
+          ? "online"
+          : data.status === "connecting"
+          ? "connecting"
+          : "offline"
+      );
+
+  } catch (error) {
+
+    document.getElementById(
+      "message"
+    ).textContent =
+      "Unable to read bot status.";
+
+  }
+
+}
+
+async function loginBot() {
+
+  const textarea =
+    document.getElementById(
+      "appstate"
+    );
+
+  const message =
+    document.getElementById(
+      "message"
+    );
+
+  const value =
+    textarea.value.trim();
+
+  if (!value) {
+
+    message.textContent =
+      "Paste your AppState/C3C first.";
+
+    return;
+
+  }
+
+  message.textContent =
+    "Logging in...";
+
+  try {
+
+    const response =
+      await fetch(
+        "/bot-login",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+          body: JSON.stringify({
+            appstate: value
+          })
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+
+      throw new Error(
+        data.error ||
+        "Login failed."
+      );
+
+    }
+
+    message.textContent =
+      "Bot successfully logged in.";
+
+    textarea.value = "";
+
+    refreshStatus();
+
+  } catch (error) {
+
+    message.textContent =
+      "Login failed: " +
+      error.message;
+
+    refreshStatus();
+
+  }
+
+}
+
+async function logoutBot() {
+
+  const message =
+    document.getElementById(
+      "message"
+    );
+
+  try {
+
+    const response =
+      await fetch(
+        "/bot-logout",
+        {
+          method: "POST"
+        }
+      );
+
+    const data =
+      await response.json();
+
+    message.textContent =
+      data.message ||
+      "Bot logged out.";
+
+    refreshStatus();
+
+  } catch (error) {
+
+    message.textContent =
+      "Logout failed.";
+
+  }
+
+}
+
+refreshStatus();
+
+setInterval(
+  refreshStatus,
+  3000
+);
+
+</script>
 
 </body>
-
 </html>
-`);
+    `);
   }
 );
 
 /*
  * ============================================================
- * BOT LOGIN FROM DASHBOARD
+ * BOT LOGIN API
  * ============================================================
  */
 
 app.post(
   "/bot-login",
   requireAuth,
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
-      const raw =
-        String(
-          req.body.appstate ||
-            ""
-        ).trim();
+      const input =
+        req.body?.appstate;
 
-      if (!raw) {
-        throw new Error(
-          "Ilagay muna ang AppState/C3C."
-        );
+      if (!input) {
+        return res.status(400).json({
+          error:
+            "AppState/C3C is required."
+        });
       }
 
-      /*
-       * Parse JSON if possible.
-       * Otherwise use cookie string.
-       */
-      let sessionValue;
-
-      try {
-        sessionValue =
-          JSON.parse(
-            raw
-          );
-      } catch (_) {
-        sessionValue =
-          raw;
+      if (botConnecting) {
+        return res.status(409).json({
+          error:
+            "Bot login is already in progress."
+        });
       }
 
-      /*
-       * Validate.
-       */
-      normalizeSession(
-        sessionValue
-      );
-
-      /*
-       * LOGIN FIRST.
-       */
       const result =
-        await loginBot(
-          sessionValue
-        );
-
-      /*
-       * SAVE ONLY AFTER
-       * SUCCESSFUL LOGIN.
-       */
-      saveSession(
-        sessionValue
-      );
-
-      res.send(`
-<!doctype html>
-
-<html>
-
-<head>
-
-<meta
-name="viewport"
-content="width=device-width,initial-scale=1"
->
-
-<title>Login Successful</title>
-
-<style>
-
-body{
-  margin:0;
-
-  min-height:100vh;
-
-  display:flex;
-
-  align-items:center;
-
-  justify-content:center;
-
-  background:#070a0f;
-
-  color:white;
-
-  font-family:Arial,sans-serif;
-}
-
-.card{
-  width:90%;
-
-  max-width:420px;
-
-  padding:25px;
-
-  border-radius:16px;
-
-  background:#101722;
-
-  border:1px solid #263244;
-
-  text-align:center;
-}
-
-.ok{
-  font-size:50px;
-}
-
-.name{
-  font-size:22px;
-
-  font-weight:bold;
-
-  margin:10px 0;
-}
-
-.uid{
-  color:#94a3b8;
-
-  word-break:break-all;
-
-  font-size:13px;
-}
-
-.status{
-  display:inline-block;
-
-  margin-top:15px;
-
-  padding:8px 13px;
-
-  border-radius:20px;
-
-  background:#052e16;
-
-  color:#4ade80;
-}
-
-button{
-  margin-top:20px;
-
-  padding:12px 20px;
-
-  border:0;
-
-  border-radius:10px;
-
-  background:#2563eb;
-
-  color:white;
-
-  font-weight:bold;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="card">
-
-<div class="ok">
-✓
-</div>
-
-<div class="name">
-
-${escapeHtml(
-  result.name
-)}
-
-</div>
-
-<div class="uid">
-
-UID:
-${escapeHtml(
-  result.uid
-)}
-
-</div>
-
-<div class="status">
-
-🟢 Messenger Logged In
-
-</div>
-
-<br>
-
-<button
-onclick="location.href='/dashboard'"
->
-
-Open Dashboard
-
-</button>
-
-</div>
-
-</body>
-
-</html>
-`);
-    } catch (
-      error
-    ) {
-      console.error(
-        "[BOT LOGIN] Dashboard login failed:",
-        error
-      );
-
-      botApi =
-        null;
-
-      botUserID =
-        "";
-
-      botName =
-        "";
-
-      botStatus =
-        "OFFLINE";
-
-      botError =
-        error?.message ||
-        String(error);
-
-      res.status(
-        400
-      ).send(`
-<!doctype html>
-
-<html>
-
-<head>
-
-<meta
-name="viewport"
-content="width=device-width,initial-scale=1"
->
-
-<title>Login Failed</title>
-
-<style>
-
-body{
-  margin:0;
-
-  min-height:100vh;
-
-  display:flex;
-
-  align-items:center;
-
-  justify-content:center;
-
-  background:#070a0f;
-
-  color:white;
-
-  font-family:Arial,sans-serif;
-}
-
-.card{
-  width:90%;
-
-  max-width:420px;
-
-  padding:25px;
-
-  border-radius:16px;
-
-  background:#101722;
-
-  border:1px solid #7f1d1d;
-
-  text-align:center;
-}
-
-.error{
-  color:#fca5a5;
-
-  margin:15px 0;
-
-  word-break:break-word;
-}
-
-button{
-  padding:12px 20px;
-
-  border:0;
-
-  border-radius:10px;
-
-  background:#2563eb;
-
-  color:white;
-
-  font-weight:bold;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="card">
-
-<h2>
-❌ Bot Login Failed
-</h2>
-
-<div class="error">
-
-${escapeHtml(
-  error?.message ||
-    String(error)
-)}
-
-</div>
-
-<button
-onclick="location.href='/dashboard'"
->
-
-Back to Dashboard
-
-</button>
-
-</div>
-
-</body>
-
-</html>
-`);
+        await loginBot(input);
+
+      return res.json(result);
+    } catch (error) {
+      return res.status(500).json({
+        error:
+          error?.errorDescription ||
+          error?.message ||
+          String(error)
+      });
     }
   }
 );
@@ -2741,151 +1848,89 @@ Back to Dashboard
 app.post(
   "/bot-logout",
   requireAuth,
-  async (
-    req,
-    res
-  ) => {
+  (req, res) => {
     try {
       if (
         botApi &&
         typeof botApi.logout ===
           "function"
       ) {
-        await new Promise(
-          resolve => {
-            try {
-              botApi.logout(
-                () => {
-                  resolve();
-                }
-              );
-            } catch (_) {
-              resolve();
-            }
-          }
-        );
+        try {
+          botApi.logout();
+        } catch (_) {}
       }
-    } catch (_) {}
 
-    botApi =
-      null;
+      botApi = null;
+      botUserID = null;
+      botName = "Not logged in";
+      botStatus = "offline";
+      botError = null;
+      botLoginAt = null;
+      botConnecting = false;
 
-    botUserID =
-      "";
-
-    botName =
-      "";
-
-    botStatus =
-      "OFFLINE";
-
-    botError =
-      "";
-
-    botLoginAt =
-      null;
-
-    res.redirect(
-      "/dashboard"
-    );
+      return res.json({
+        success: true,
+        message:
+          "Bot logged out."
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: error.message
+      });
+    }
   }
 );
 
 /*
  * ============================================================
- * API STATUS
+ * STATUS API
  * ============================================================
  */
 
 app.get(
   "/api/status",
   requireAuth,
-  (
-    req,
-    res
-  ) => {
+  (req, res) => {
     res.json({
-      bot: {
-        status:
-          botStatus,
-
-        loggedIn:
-          botStatus ===
-          "ONLINE",
-
-        name:
-          botName ||
-          null,
-
-        uid:
-          botUserID ||
-          null,
-
-        messenger:
-          botStatus ===
-          "ONLINE"
-            ? "Logged In"
-            : "Logged Out",
-
-        loginAt:
-          botLoginAt
-            ? new Date(
-                botLoginAt
-              ).toISOString()
-            : null
-      },
-
-      system: {
-        uptime:
-          process.uptime(),
-
-        node:
-          process.version,
-
-        platform:
-          process.platform,
-
-        arch:
-          process.arch,
-
-        memory:
-          process.memoryUsage()
-      },
-
-      banat: {
-        activeThreads:
-          activeThreads.size,
-
-        queuedThreads:
-          threadQueues.size,
-
-        globalActive
-      }
+      name: botName,
+      uid: botUserID,
+      status: botStatus,
+      error: botError,
+      uptime: uptimeText(),
+      loggedIn: Boolean(botApi),
+      connecting: botConnecting
     });
   }
 );
 
 /*
  * ============================================================
- * ADMIN LOGOUT
+ * DASHBOARD LOGOUT
  * ============================================================
  */
 
 app.get(
   "/logout",
-  (
-    req,
-    res
-  ) => {
-    req.session.destroy(
-      () => {
-        res.redirect(
-          "/login"
-        );
-      }
-    );
+  (req, res) => {
+    req.session.destroy(() => {
+      res.redirect("/login");
+    });
   }
 );
+
+/*
+ * ============================================================
+ * ROOT
+ * ============================================================
+ */
+
+app.get("/", (req, res) => {
+  if (req.session?.authenticated) {
+    return res.redirect("/dashboard");
+  }
+
+  return res.redirect("/login");
+});
 
 /*
  * ============================================================
@@ -2893,60 +1938,87 @@ app.get(
  * ============================================================
  */
 
-const server =
-  http.createServer(
-    app
-  );
-
 server.listen(
   PORT,
   "0.0.0.0",
   () => {
     console.log(
-      `[DASHBOARD] running on port ${PORT}`
+      "============================================"
     );
 
     console.log(
-      `[DASHBOARD] Login: ${ADMIN_USER}`
+      "       SINZU AI COMMAND CENTER"
+    );
+
+    console.log(
+      "============================================"
+    );
+
+    console.log(
+      `[SERVER] Listening on port ${PORT}`
+    );
+
+    console.log(
+      `[DASHBOARD] Username: ${ADMIN_USER}`
+    );
+
+    console.log(
+      "[DASHBOARD] Password configured."
+    );
+
+    console.log(
+      `[BANAT] Default: ${
+        DEFAULT_ON ? "ON" : "OFF"
+      }`
+    );
+
+    console.log(
+      "[NICKNAME] Protection module loaded."
+    );
+
+    console.log(
+      "[GC NAME] Protection module loaded."
+    );
+
+    console.log(
+      "============================================"
     );
 
     /*
-     * Automatic login if
-     * FB_APPSTATE / FB_COOKIES
-     * or appstate.json exists.
+     * ==========================================================
+     * AUTO LOGIN FROM SAVED APPSTATE
+     * ==========================================================
      */
-    try {
-      const saved =
-        getSavedSession();
 
-      if (saved) {
-        console.log(
-          "[BOT] Saved session found. Attempting automatic login..."
-        );
+    const savedSession =
+      getSavedSession();
 
-        loginBot(
-          saved
-        ).catch(
-          error => {
-            console.error(
-              "[BOT] Automatic login failed:",
-              error?.message ||
-                error
-            );
-          }
-        );
-      } else {
-        console.log(
-          "[BOT] No saved session. Login from dashboard."
-        );
-      }
-    } catch (
-      error
-    ) {
-      console.error(
-        "[BOT] Saved session error:",
-        error?.message ||
-          error
+    if (savedSession) {
+      console.log(
+        "[BOT] Saved AppState found. Starting login..."
+      );
+
+      loginBot(savedSession)
+        .then(result => {
+          console.log(
+            `[BOT] Auto-login successful: ${result.name} (${result.uid})`
+          );
+        })
+        .catch(error => {
+          console.error(
+            "[BOT] Auto-login failed:",
+            error?.errorDescription ||
+            error?.message ||
+            error
+          );
+        });
+    } else {
+      console.log(
+        "[BOT] No saved AppState found."
+      );
+
+      console.log(
+        "[BOT] Login from the dashboard."
       );
     }
   }
@@ -2964,3 +2036,30 @@ module.exports = {
   handleBanatCommand,
   loginBot
 };
+
+⚠️ Important: This assumes your existing "setallnick.js" and "gcname-lock.js" are already in the same root folder as "index.js", and both export "handleCommand" plus their protection function.
+
+Your root should look like:
+
+Cresi/
+├── index.js
+├── package.json
+├── triggers.js
+├── banat-human.js
+├── banat-targeting.js
+├── setallnick.js
+├── gcname-lock.js
+└── appstate.json        ← automatically created after successful login
+
+Dashboard login: "admin" / "halimaw123".
+
+Commands connected:
+
+- "!setallnick <nickname>"
+- "!restoreallnick"
+- "!nickprotect"
+- "!lockgcname <name>"
+- "!unlockgcname"
+- "!gcnameprotect"
+
+Hindi ko ginalaw ang intended "triggers.js", "banat-human.js", at "banat-targeting.js" logic. Also, keep your AppState/C3C private and don't commit "appstate.json" to a public GitHub repo.
