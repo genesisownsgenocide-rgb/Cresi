@@ -13,6 +13,7 @@ const { login } = require("ws3-fca");
  * HUWAG GALAWIN ANG MGA FILE NA ITO.
  * ============================================================
  */
+
 const {
   getTriggerReply,
   getBanatConversationReply
@@ -36,8 +37,16 @@ const {
 
 const PORT = Number(process.env.PORT || 10000);
 
-const ADMIN_USER = process.env.DASHBOARD_USER || "admin";
-const ADMIN_PASS = process.env.DASHBOARD_PASS || "halimaw123";
+/*
+ * DASHBOARD LOGIN
+ * No Environment Variables required.
+ */
+const ADMIN_USER = "admin";
+const ADMIN_PASS = "halimaw123";
+
+/*
+ * BANAT SETTINGS
+ */
 
 const DEFAULT_ON =
   /^(1|true|yes|on)$/i.test(
@@ -46,15 +55,24 @@ const DEFAULT_ON =
 
 const GLOBAL_SEND_LIMIT = Math.max(
   1,
-  Number(process.env.BANAT_GLOBAL_SEND_LIMIT || 2)
+  Number(
+    process.env.BANAT_GLOBAL_SEND_LIMIT || 2
+  )
 );
 
 const THREAD_COOLDOWN_MS = Math.max(
   0,
-  Number(process.env.BANAT_THREAD_COOLDOWN_MS || 12000)
+  Number(
+    process.env.BANAT_THREAD_COOLDOWN_MS ||
+      12000
+  )
 );
 
-const RETRY_DELAYS = [1500, 4000, 8000];
+const RETRY_DELAYS = [
+  1500,
+  4000,
+  8000
+];
 
 /*
  * Official Admin UID
@@ -75,6 +93,12 @@ let botError = "";
 let botLoginAt = null;
 let botConnecting = false;
 
+/*
+ * ============================================================
+ * BANAT STATE
+ * ============================================================
+ */
+
 const activeThreads = new Set();
 const threadQueues = new Map();
 const threadLastSent = new Map();
@@ -89,7 +113,9 @@ let globalActive = 0;
  */
 
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise(resolve =>
+    setTimeout(resolve, ms)
+  );
 }
 
 function escapeHtml(value) {
@@ -102,11 +128,22 @@ function escapeHtml(value) {
 }
 
 function uptimeText() {
-  const sec = Math.floor(process.uptime());
+  const sec = Math.floor(
+    process.uptime()
+  );
 
-  const days = Math.floor(sec / 86400);
-  const hours = Math.floor((sec % 86400) / 3600);
-  const minutes = Math.floor((sec % 3600) / 60);
+  const days = Math.floor(
+    sec / 86400
+  );
+
+  const hours = Math.floor(
+    (sec % 86400) / 3600
+  );
+
+  const minutes = Math.floor(
+    (sec % 3600) / 60
+  );
+
   const seconds = sec % 60;
 
   return `${days}d ${hours}h ${minutes}m ${seconds}s`;
@@ -119,22 +156,36 @@ function uptimeText() {
  */
 
 function normalizeSession(value) {
+  /*
+   * Plain cookie string
+   */
   if (typeof value === "string") {
-    const cookie = value.trim();
+    const cookie =
+      value.trim();
 
     if (!cookie) {
-      throw new Error("Empty Facebook session.");
+      throw new Error(
+        "Empty Facebook session."
+      );
     }
 
     return cookie;
   }
 
+  /*
+   * AppState array OR object containing
+   * appState/cookies.
+   */
   const entries =
     Array.isArray(value)
       ? value
-      : Array.isArray(value?.appState)
+      : Array.isArray(
+          value?.appState
+        )
         ? value.appState
-        : Array.isArray(value?.cookies)
+        : Array.isArray(
+            value?.cookies
+          )
           ? value.cookies
           : null;
 
@@ -146,29 +197,46 @@ function normalizeSession(value) {
 
   const parts = entries
     .map(cookie => {
-      const key = cookie?.key ?? cookie?.name;
-      const val = cookie?.value;
+      const key =
+        cookie?.key ??
+        cookie?.name;
 
-      if (key == null || val == null) {
+      const val =
+        cookie?.value;
+
+      if (
+        key == null ||
+        val == null
+      ) {
         return null;
       }
 
-      return `${String(key).trim()}=${String(val)}`;
+      return (
+        String(key).trim() +
+        "=" +
+        String(val)
+      );
     })
     .filter(Boolean);
 
   if (!parts.length) {
-    throw new Error("No valid cookies found in AppState.");
+    throw new Error(
+      "No valid cookies found in AppState."
+    );
   }
 
   return parts.join("; ");
 }
 
 function parseSessionInput(input) {
-  const text = String(input || "").trim();
+  const text =
+    String(input || "")
+      .trim();
 
   if (!text) {
-    throw new Error("Ilagay muna ang AppState/C3C.");
+    throw new Error(
+      "Ilagay muna ang AppState/C3C."
+    );
   }
 
   /*
@@ -179,11 +247,12 @@ function parseSessionInput(input) {
     text.startsWith("{")
   ) {
     try {
-      return normalizeSession(JSON.parse(text));
-    } catch (error) {
+      return normalizeSession(
+        JSON.parse(text)
+      );
+    } catch (_) {
       /*
-       * Kung valid cookie string na mukhang JSON-like,
-       * fallback below.
+       * Continue as cookie string.
        */
     }
   }
@@ -191,56 +260,105 @@ function parseSessionInput(input) {
   /*
    * Cookie string
    */
-  return normalizeSession(text);
+  return normalizeSession(
+    text
+  );
 }
 
 function getSavedSession() {
+  /*
+   * Optional environment session.
+   */
   const envSession =
     process.env.FB_APPSTATE ||
     process.env.FB_COOKIES;
 
   if (envSession) {
     try {
-      return parseSessionInput(envSession);
+      return parseSessionInput(
+        envSession
+      );
     } catch (_) {}
   }
 
-  const appStatePath = path.join(
-    process.cwd(),
-    "appstate.json"
-  );
-
-  if (fs.existsSync(appStatePath)) {
-    const raw = fs.readFileSync(
-      appStatePath,
-      "utf8"
+  /*
+   * Optional local AppState.
+   */
+  const appStatePath =
+    path.join(
+      process.cwd(),
+      "appstate.json"
     );
 
-    return parseSessionInput(raw);
+  if (
+    fs.existsSync(
+      appStatePath
+    )
+  ) {
+    const raw =
+      fs.readFileSync(
+        appStatePath,
+        "utf8"
+      );
+
+    return parseSessionInput(
+      raw
+    );
   }
 
   return null;
 }
 
-function saveSession(rawInput) {
-  /*
-   * HINDI ipinapakita sa dashboard pagkatapos ma-save.
-   */
-  const parsed = JSON.parse(rawInput);
+function saveSession(
+  sessionValue
+) {
+  const filePath =
+    path.join(
+      process.cwd(),
+      "appstate.json"
+    );
 
   /*
-   * Validate first.
+   * Validate before saving.
    */
-  normalizeSession(parsed);
-
-  const filePath = path.join(
-    process.cwd(),
-    "appstate.json"
+  normalizeSession(
+    sessionValue
   );
+
+  let dataToSave =
+    sessionValue;
+
+  /*
+   * Preserve JSON AppState format.
+   */
+  if (
+    typeof sessionValue ===
+    "string"
+  ) {
+    try {
+      dataToSave =
+        JSON.parse(
+          sessionValue
+        );
+    } catch (_) {
+      /*
+       * Plain cookie string.
+       */
+      dataToSave =
+        sessionValue;
+    }
+  }
 
   fs.writeFileSync(
     filePath,
-    JSON.stringify(parsed, null, 2),
+    typeof dataToSave ===
+      "string"
+      ? dataToSave
+      : JSON.stringify(
+          dataToSave,
+          null,
+          2
+        ),
     "utf8"
   );
 }
@@ -251,12 +369,15 @@ function saveSession(rawInput) {
  * ============================================================
  */
 
-async function getBotAccountInfo(api) {
+async function getBotAccountInfo(
+  api
+) {
   let uid = "";
 
   try {
     uid = String(
-      api.getCurrentUserID?.() || ""
+      api.getCurrentUserID?.() ||
+        ""
     );
   } catch (_) {}
 
@@ -267,76 +388,99 @@ async function getBotAccountInfo(api) {
     return;
   }
 
-  /*
-   * ws3-fca normally exposes getUserInfo.
-   */
   try {
-    const info = await new Promise(resolve => {
-      if (
-        !api.getUserInfo ||
-        typeof api.getUserInfo !== "function"
-      ) {
-        resolve(null);
-        return;
-      }
-
-      api.getUserInfo(
-        uid,
-        (error, result) => {
-          if (error) {
+    const info =
+      await new Promise(
+        resolve => {
+          if (
+            !api.getUserInfo ||
+            typeof api.getUserInfo !==
+              "function"
+          ) {
             resolve(null);
             return;
           }
 
-          resolve(result);
+          api.getUserInfo(
+            uid,
+            (
+              error,
+              result
+            ) => {
+              if (error) {
+                resolve(null);
+                return;
+              }
+
+              resolve(result);
+            }
+          );
         }
       );
-    });
 
-    if (info && info[uid]) {
+    if (
+      info &&
+      info[uid]
+    ) {
       botName =
         info[uid].name ||
         info[uid].firstName ||
         "Unknown";
     } else {
-      botName = "Unknown";
+      botName =
+        "Unknown";
     }
   } catch (_) {
-    botName = "Unknown";
+    botName =
+      "Unknown";
   }
 }
 
 /*
  * ============================================================
  * BANAT TRAFFIC SYSTEM
- * EXISTING LOGIC PRESERVED
  * ============================================================
  */
 
-function enqueue(threadID, job) {
-  const key = String(threadID);
+function enqueue(
+  threadID,
+  job
+) {
+  const key =
+    String(threadID);
 
   const current =
     threadQueues.get(key) ||
     Promise.resolve();
 
-  const next = current
-    .catch(() => {})
-    .then(job)
-    .finally(() => {
-      if (threadQueues.get(key) === next) {
-        threadQueues.delete(key);
-      }
-    });
+  const next =
+    current
+      .catch(() => {})
+      .then(job)
+      .finally(() => {
+        if (
+          threadQueues.get(
+            key
+          ) === next
+        ) {
+          threadQueues.delete(
+            key
+          );
+        }
+      });
 
-  threadQueues.set(key, next);
+  threadQueues.set(
+    key,
+    next
+  );
 
   return next;
 }
 
 async function acquireGlobalSlot() {
   while (
-    globalActive >= GLOBAL_SEND_LIMIT
+    globalActive >=
+    GLOBAL_SEND_LIMIT
   ) {
     await sleep(150);
   }
@@ -345,16 +489,20 @@ async function acquireGlobalSlot() {
 }
 
 function releaseGlobalSlot() {
-  globalActive = Math.max(
-    0,
-    globalActive - 1
-  );
+  globalActive =
+    Math.max(
+      0,
+      globalActive - 1
+    );
 }
 
-function is1545012(error) {
-  const text = JSON.stringify(
-    error || ""
-  );
+function is1545012(
+  error
+) {
+  const text =
+    JSON.stringify(
+      error || ""
+    );
 
   return /1545012|temporarily unavailable|message could not be sent/i.test(
     text
@@ -368,168 +516,231 @@ function trafficSendMessage(
   callback,
   replyToMessageID = null
 ) {
-  const key = String(threadID);
+  const key =
+    String(threadID);
 
-  return enqueue(key, async () => {
-    const now = Date.now();
+  return enqueue(
+    key,
+    async () => {
+      const now =
+        Date.now();
 
-    const cooldownUntil = Number(
-      threadCooldown.get(key) || 0
-    );
-
-    if (cooldownUntil > now) {
-      callback(
-        new Error(
-          `thread cooldown active for ${
-            cooldownUntil - now
-          }ms`
-        )
-      );
-
-      return;
-    }
-
-    const sinceLast =
-      now -
-      Number(
-        threadLastSent.get(key) || 0
-      );
-
-    if (
-      sinceLast <
-      THREAD_COOLDOWN_MS
-    ) {
-      await sleep(
-        THREAD_COOLDOWN_MS -
-          sinceLast
-      );
-    }
-
-    await acquireGlobalSlot();
-
-    try {
-      let lastError = null;
-
-      for (
-        let attempt = 0;
-        attempt <= RETRY_DELAYS.length;
-        attempt++
-      ) {
-        try {
-          const result =
-            await new Promise(
-              (resolve, reject) => {
-                let settled = false;
-
-                const done = (
-                  err,
-                  info
-                ) => {
-                  if (settled) return;
-
-                  settled = true;
-
-                  if (err) {
-                    reject(err);
-                  } else {
-                    resolve(info);
-                  }
-                };
-
-                try {
-                  let returned;
-
-                  if (
-                    replyToMessageID
-                  ) {
-                    returned =
-                      api.sendMessage(
-                        message,
-                        threadID,
-                        done,
-                        replyToMessageID
-                      );
-                  } else {
-                    returned =
-                      api.sendMessage(
-                        message,
-                        threadID,
-                        done
-                      );
-                  }
-
-                  if (
-                    returned &&
-                    typeof returned.then ===
-                      "function"
-                  ) {
-                    returned
-                      .then(info =>
-                        done(null, info)
-                      )
-                      .catch(done);
-                  }
-                } catch (error) {
-                  reject(error);
-                }
-              }
-            );
-
-          threadLastSent.set(
-            key,
-            Date.now()
-          );
-
-          callback(null, result);
-          return;
-        } catch (error) {
-          lastError = error;
-
-          if (
-            !is1545012(error) ||
-            attempt >=
-              RETRY_DELAYS.length
-          ) {
-            break;
-          }
-
-          threadCooldown.set(
-            key,
-            Date.now() +
-              Math.min(
-                15000,
-                RETRY_DELAYS[attempt]
-              )
-          );
-
-          await sleep(
-            RETRY_DELAYS[attempt]
-          );
-
-          threadCooldown.delete(
+      const cooldownUntil =
+        Number(
+          threadCooldown.get(
             key
-          );
-        }
+          ) || 0
+        );
+
+      if (
+        cooldownUntil >
+        now
+      ) {
+        callback(
+          new Error(
+            `thread cooldown active for ${
+              cooldownUntil - now
+            }ms`
+          )
+        );
+
+        return;
       }
 
-      if (is1545012(lastError)) {
-        threadCooldown.set(
-          key,
-          Date.now() +
-            5 * 60 * 1000
+      const sinceLast =
+        now -
+        Number(
+          threadLastSent.get(
+            key
+          ) || 0
+        );
+
+      if (
+        sinceLast <
+        THREAD_COOLDOWN_MS
+      ) {
+        await sleep(
+          THREAD_COOLDOWN_MS -
+            sinceLast
         );
       }
 
-      callback(lastError);
-    } finally {
-      releaseGlobalSlot();
+      await acquireGlobalSlot();
+
+      try {
+        let lastError =
+          null;
+
+        for (
+          let attempt = 0;
+          attempt <=
+          RETRY_DELAYS.length;
+          attempt++
+        ) {
+          try {
+            const result =
+              await new Promise(
+                (
+                  resolve,
+                  reject
+                ) => {
+                  let settled =
+                    false;
+
+                  const done = (
+                    err,
+                    info
+                  ) => {
+                    if (
+                      settled
+                    ) {
+                      return;
+                    }
+
+                    settled =
+                      true;
+
+                    if (err) {
+                      reject(
+                        err
+                      );
+                    } else {
+                      resolve(
+                        info
+                      );
+                    }
+                  };
+
+                  try {
+                    let returned;
+
+                    if (
+                      replyToMessageID
+                    ) {
+                      returned =
+                        api.sendMessage(
+                          message,
+                          threadID,
+                          done,
+                          replyToMessageID
+                        );
+                    } else {
+                      returned =
+                        api.sendMessage(
+                          message,
+                          threadID,
+                          done
+                        );
+                    }
+
+                    if (
+                      returned &&
+                      typeof returned.then ===
+                        "function"
+                    ) {
+                      returned
+                        .then(
+                          info =>
+                            done(
+                              null,
+                              info
+                            )
+                        )
+                        .catch(
+                          done
+                        );
+                    }
+                  } catch (
+                    error
+                  ) {
+                    reject(
+                      error
+                    );
+                  }
+                }
+              );
+
+            threadLastSent.set(
+              key,
+              Date.now()
+            );
+
+            callback(
+              null,
+              result
+            );
+
+            return;
+          } catch (
+            error
+          ) {
+            lastError =
+              error;
+
+            if (
+              !is1545012(
+                error
+              ) ||
+              attempt >=
+                RETRY_DELAYS.length
+            ) {
+              break;
+            }
+
+            threadCooldown.set(
+              key,
+              Date.now() +
+                Math.min(
+                  15000,
+                  RETRY_DELAYS[
+                    attempt
+                  ]
+                )
+            );
+
+            await sleep(
+              RETRY_DELAYS[
+                attempt
+              ]
+            );
+
+            threadCooldown.delete(
+              key
+            );
+          }
+        }
+
+        if (
+          is1545012(
+            lastError
+          )
+        ) {
+          threadCooldown.set(
+            key,
+            Date.now() +
+              5 *
+                60 *
+                1000
+          );
+        }
+
+        callback(
+          lastError
+        );
+      } finally {
+        releaseGlobalSlot();
+      }
     }
-  });
+  );
 }
 
-function isBanatCommand(body) {
+function isBanatCommand(
+  body
+) {
   return /^!(?:banat|troll)(?:\s|$)/i.test(
-    String(body || "").trim()
+    String(
+      body || ""
+    ).trim()
   );
 }
 
@@ -540,21 +751,34 @@ function commandSendMessage(
   replyToMessageID = null
 ) {
   return new Promise(
-    (resolve, reject) => {
-      let settled = false;
+    (
+      resolve,
+      reject
+    ) => {
+      let settled =
+        false;
 
       const done = (
         err,
         info
       ) => {
-        if (settled) return;
+        if (
+          settled
+        ) {
+          return;
+        }
 
-        settled = true;
+        settled =
+          true;
 
         if (err) {
-          reject(err);
+          reject(
+            err
+          );
         } else {
-          resolve(info);
+          resolve(
+            info
+          );
         }
       };
 
@@ -579,13 +803,23 @@ function commandSendMessage(
             "function"
         ) {
           returned
-            .then(info =>
-              done(null, info)
+            .then(
+              info =>
+                done(
+                  null,
+                  info
+                )
             )
-            .catch(done);
+            .catch(
+              done
+            );
         }
-      } catch (error) {
-        done(error);
+      } catch (
+        error
+      ) {
+        done(
+          error
+        );
       }
     }
   );
@@ -596,26 +830,30 @@ function sendCommandReply(
   event,
   message
 ) {
-  const threadID = String(
-    event.threadID
-  );
+  const threadID =
+    String(
+      event.threadID
+    );
 
   commandSendMessage(
     api,
     message,
     threadID,
-    event.messageID || null
+    event.messageID ||
+      null
   )
     .then(() =>
       console.log(
         `[BANAT] command reply sent: ${message}`
       )
     )
-    .catch(error =>
-      console.error(
-        "[BANAT] command reply failed:",
-        error?.message || error
-      )
+    .catch(
+      error =>
+        console.error(
+          "[BANAT] command reply failed:",
+          error?.message ||
+            error
+        )
     );
 }
 
@@ -624,29 +862,38 @@ function handleBanatCommand(
   event,
   body
 ) {
-  const threadID = String(
-    event.threadID
-  );
+  const threadID =
+    String(
+      event.threadID
+    );
 
-  const senderID = String(
-    event.senderID || ""
-  );
+  const senderID =
+    String(
+      event.senderID ||
+        ""
+    );
 
-  const parts = String(body)
-    .trim()
-    .split(/\s+/);
+  const parts =
+    String(body)
+      .trim()
+      .split(/\s+/);
 
   const cmd = (
-    parts[0] || ""
+    parts[0] ||
+    ""
   ).toLowerCase();
 
   const sub = (
-    parts[1] || "status"
+    parts[1] ||
+    "status"
   ).toLowerCase();
 
-  if (cmd === "!troll") {
+  if (
+    cmd === "!troll"
+  ) {
     if (
-      senderID !== ADMIN_UID
+      senderID !==
+      ADMIN_UID
     ) {
       sendCommandReply(
         api,
@@ -658,7 +905,8 @@ function handleBanatCommand(
     }
 
     const targetUID =
-      parts[1] || "wala";
+      parts[1] ||
+      "wala";
 
     sendCommandReply(
       api,
@@ -686,7 +934,8 @@ function handleBanatCommand(
 
     console.log(
       `[BANAT] activated thread ${threadID} by ${
-        event.senderID || "unknown"
+        event.senderID ||
+        "unknown"
       }`
     );
 
@@ -726,7 +975,9 @@ function handleBanatCommand(
     return true;
   }
 
-  if (sub === "toggle") {
+  if (
+    sub === "toggle"
+  ) {
     const next =
       !isBanatConversationModeActive(
         threadID
@@ -759,7 +1010,9 @@ function handleBanatCommand(
     return true;
   }
 
-  if (sub === "status") {
+  if (
+    sub === "status"
+  ) {
     const on =
       activeThreads.has(
         threadID
@@ -779,7 +1032,9 @@ function handleBanatCommand(
     return true;
   }
 
-  if (sub === "help") {
+  if (
+    sub === "help"
+  ) {
     sendCommandReply(
       api,
       event,
@@ -806,8 +1061,11 @@ async function sendBanat(
   return sendBanatReplyWithTyping(
     api,
     text,
-    String(event.threadID),
-    event.messageID || null,
+    String(
+      event.threadID
+    ),
+    event.messageID ||
+      null,
     {
       trafficSendMessage,
       incomingText:
@@ -820,11 +1078,14 @@ function onMessage(
   api,
   event
 ) {
-  if (!event) return;
+  if (!event) {
+    return;
+  }
 
   if (
     event.type &&
-    event.type !== "message"
+    event.type !==
+      "message"
   ) {
     return;
   }
@@ -832,20 +1093,29 @@ function onMessage(
   if (
     event.senderID &&
     botUserID &&
-    String(event.senderID) ===
-      String(botUserID)
+    String(
+      event.senderID
+    ) ===
+      String(
+        botUserID
+      )
   ) {
     return;
   }
 
-  const body = String(
-    event.body || ""
-  ).trim();
+  const body =
+    String(
+      event.body || ""
+    ).trim();
 
-  if (!body) return;
+  if (!body) {
+    return;
+  }
 
   if (
-    isBanatCommand(body)
+    isBanatCommand(
+      body
+    )
   ) {
     handleBanatCommand(
       api,
@@ -856,9 +1126,10 @@ function onMessage(
     return;
   }
 
-  const threadID = String(
-    event.threadID
-  );
+  const threadID =
+    String(
+      event.threadID
+    );
 
   const active =
     activeThreads.has(
@@ -869,11 +1140,14 @@ function onMessage(
     );
 
   const target =
-    classifyBanatTarget({
-      event,
-      body,
-      botID: botUserID
-    });
+    classifyBanatTarget(
+      {
+        event,
+        body,
+        botID:
+          botUserID
+      }
+    );
 
   if (active) {
     const reply =
@@ -891,11 +1165,12 @@ function onMessage(
         api,
         event,
         reply
-      ).catch(error =>
-        console.error(
-          "[BANAT] reply error:",
-          error
-        )
+      ).catch(
+        error =>
+          console.error(
+            "[BANAT] reply error:",
+            error
+          )
       );
     }
 
@@ -920,11 +1195,12 @@ function onMessage(
         api,
         event,
         reply
-      ).catch(error =>
-        console.error(
-          "[BANAT]",
-          error
-        )
+      ).catch(
+        error =>
+          console.error(
+            "[BANAT]",
+            error
+          )
       );
     }
   }
@@ -937,28 +1213,42 @@ function onMessage(
  */
 
 function start(api) {
-  botApi = api;
-  botStatus = "ONLINE";
-  botError = "";
-  botLoginAt = Date.now();
+  botApi =
+    api;
+
+  botStatus =
+    "ONLINE";
+
+  botError =
+    "";
+
+  botLoginAt =
+    Date.now();
 
   try {
-    botUserID = String(
-      api.getCurrentUserID?.() ||
-        ""
-    );
+    botUserID =
+      String(
+        api.getCurrentUserID?.() ||
+          ""
+      );
   } catch (_) {
-    botUserID = "";
+    botUserID =
+      "";
   }
 
-  if (DEFAULT_ON) {
+  if (
+    DEFAULT_ON
+  ) {
     console.log(
       "[BANAT] BANAT_DEFAULT_ON enabled."
     );
   }
 
   api.listenMqtt(
-    (error, event) => {
+    (
+      error,
+      event
+    ) => {
       if (error) {
         console.error(
           "[BANAT] listener error:",
@@ -969,9 +1259,6 @@ function start(api) {
           error?.message ||
           String(error);
 
-        /*
-         * Do not instantly kill Railway process.
-         */
         return;
       }
 
@@ -982,7 +1269,8 @@ function start(api) {
           event?.senderID &&
           String(
             event.senderID
-          ) !== botUserID
+          ) !==
+            botUserID
         ) {
           const key =
             String(
@@ -1010,7 +1298,9 @@ function start(api) {
           api,
           event
         );
-      } catch (error) {
+      } catch (
+        error
+      ) {
         console.error(
           "[BANAT] message handler error:",
           error
@@ -1037,17 +1327,28 @@ function start(api) {
 async function loginBot(
   sessionValue
 ) {
-  if (botConnecting) {
+  if (
+    botConnecting
+  ) {
     throw new Error(
       "Bot login is already in progress."
     );
   }
 
-  botConnecting = true;
-  botStatus = "CONNECTING";
-  botError = "";
-  botName = "";
-  botUserID = "";
+  botConnecting =
+    true;
+
+  botStatus =
+    "CONNECTING";
+
+  botError =
+    "";
+
+  botName =
+    "";
+
+  botUserID =
+    "";
 
   try {
     const cookie =
@@ -1061,25 +1362,32 @@ async function loginBot(
 
     const api =
       await new Promise(
-        (resolve, reject) => {
+        (
+          resolve,
+          reject
+        ) => {
           login(
             cookie,
-            (error, api) => {
+            (
+              error,
+              api
+            ) => {
               if (error) {
-                reject(error);
+                reject(
+                  error
+                );
+
                 return;
               }
 
-              resolve(api);
+              resolve(
+                api
+              );
             }
           );
         }
       );
 
-    /*
-     * Get account information BEFORE
-     * marking dashboard as fully online.
-     */
     await getBotAccountInfo(
       api
     );
@@ -1090,27 +1398,48 @@ async function loginBot(
       );
     }
 
-    botApi = api;
+    botApi =
+      api;
 
-    start(api);
+    start(
+      api
+    );
 
-    botStatus = "ONLINE";
+    botStatus =
+      "ONLINE";
 
     console.log(
-      `[BOT LOGIN] SUCCESS: ${botName || "Unknown"} (${botUserID})`
+      `[BOT LOGIN] SUCCESS: ${
+        botName ||
+        "Unknown"
+      } (${botUserID})`
     );
 
     return {
       name:
-        botName || "Unknown",
-      uid: botUserID,
-      status: "ONLINE"
+        botName ||
+        "Unknown",
+
+      uid:
+        botUserID,
+
+      status:
+        "ONLINE"
     };
-  } catch (error) {
-    botApi = null;
-    botUserID = "";
-    botName = "";
-    botStatus = "OFFLINE";
+  } catch (
+    error
+  ) {
+    botApi =
+      null;
+
+    botUserID =
+      "";
+
+    botName =
+      "";
+
+    botStatus =
+      "OFFLINE";
 
     botError =
       error?.message ||
@@ -1123,7 +1452,8 @@ async function loginBot(
 
     throw error;
   } finally {
-    botConnecting = false;
+    botConnecting =
+      false;
   }
 }
 
@@ -1133,36 +1463,58 @@ async function loginBot(
  * ============================================================
  */
 
-const app = express();
+const app =
+  express();
 
-app.use(
-  express.urlencoded({
-    extended: true,
-    limit: "2mb"
-  })
+/*
+ * Important for Render/Railway reverse proxy.
+ */
+app.set(
+  "trust proxy",
+  1
 );
 
 app.use(
-  express.json({
-    limit: "2mb"
-  })
-);
-
-app.use(
-  session({
-    secret:
-      process.env.SESSION_SECRET ||
-      "change-this-dashboard-secret",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure:
-        process.env.NODE_ENV ===
-        "production"
+  express.urlencoded(
+    {
+      extended: true,
+      limit: "2mb"
     }
-  })
+  )
+);
+
+app.use(
+  express.json(
+    {
+      limit: "2mb"
+    }
+  )
+);
+
+app.use(
+  session(
+    {
+      secret:
+        "banat_dashboard_secret_key_12345",
+
+      resave:
+        false,
+
+      saveUninitialized:
+        false,
+
+      cookie: {
+        httpOnly:
+          true,
+
+        sameSite:
+          "lax",
+
+        secure:
+          true
+      }
+    }
+  )
 );
 
 function requireAuth(
@@ -1177,18 +1529,23 @@ function requireAuth(
     return next();
   }
 
-  res.redirect("/login");
+  res.redirect(
+    "/login"
+  );
 }
 
 /*
  * ============================================================
- * LOGIN PAGE
+ * ROOT
  * ============================================================
  */
 
 app.get(
   "/",
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     if (
       req.session &&
       req.session.isAdmin
@@ -1198,128 +1555,239 @@ app.get(
       );
     }
 
-    res.redirect("/login");
+    res.redirect(
+      "/login"
+    );
   }
 );
 
+/*
+ * ============================================================
+ * ADMIN LOGIN PAGE
+ * ============================================================
+ */
+
 app.get(
   "/login",
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     res.send(`
 <!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport"
+content="width=device-width,initial-scale=1">
+
 <title>Bot Dashboard Login</title>
+
 <style>
-*{box-sizing:border-box}
+
+*{
+  box-sizing:border-box;
+}
+
 body{
   margin:0;
   min-height:100vh;
+
   display:flex;
   align-items:center;
   justify-content:center;
+
   background:#080b10;
   color:#fff;
+
   font-family:Arial,sans-serif;
 }
+
 .card{
   width:92%;
   max-width:380px;
+
   background:#111722;
+
   border:1px solid #263142;
   border-radius:18px;
+
   padding:28px;
-  box-shadow:0 20px 60px #000;
+
+  box-shadow:
+    0 20px 60px #000;
 }
+
 h1{
   margin:0 0 8px;
   font-size:25px;
 }
+
 p{
   color:#94a3b8;
   font-size:14px;
 }
+
 input{
   width:100%;
+
   padding:13px;
+
   margin:7px 0;
+
   border-radius:10px;
+
   border:1px solid #334155;
+
   background:#090d14;
+
   color:#fff;
+
   outline:none;
 }
+
 button{
   width:100%;
+
   padding:13px;
+
   margin-top:10px;
+
   border:0;
+
   border-radius:10px;
+
   background:#2563eb;
+
   color:#fff;
+
   font-weight:bold;
+
   cursor:pointer;
 }
-button:hover{opacity:.9}
+
+button:hover{
+  opacity:.9;
+}
+
 </style>
 </head>
+
 <body>
+
 <div class="card">
-  <h1>Bot Control Panel</h1>
-  <p>Admin login para ma-access ang bot dashboard.</p>
 
-  <form method="POST" action="/login">
-    <input
-      name="username"
-      placeholder="Dashboard username"
-      required
-    >
+<h1>Bot Control Panel</h1>
 
-    <input
-      type="password"
-      name="password"
-      placeholder="Dashboard password"
-      required
-    >
+<p>
+Admin login para ma-access ang bot dashboard.
+</p>
 
-    <button type="submit">
-      Login
-    </button>
-  </form>
+<form
+method="POST"
+action="/login"
+>
+
+<input
+name="username"
+placeholder="Dashboard username"
+autocomplete="username"
+required
+>
+
+<input
+type="password"
+name="password"
+placeholder="Dashboard password"
+autocomplete="current-password"
+required
+>
+
+<button type="submit">
+Login
+</button>
+
+</form>
+
 </div>
+
 </body>
 </html>
 `);
   }
 );
 
+/*
+ * ============================================================
+ * ADMIN LOGIN ACTION
+ * ============================================================
+ */
+
 app.post(
   "/login",
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     const {
       username,
       password
     } = req.body;
 
     if (
-      username === ADMIN_USER &&
-      password === ADMIN_PASS
+      username ===
+        ADMIN_USER &&
+      password ===
+        ADMIN_PASS
     ) {
       req.session.isAdmin =
         true;
 
-      return res.redirect(
-        "/dashboard"
+      return req.session.save(
+        () => {
+          res.redirect(
+            "/dashboard"
+          );
+        }
       );
     }
 
-    res.status(401).send(`
-<script>
-alert("Wrong dashboard username or password.");
-location.href="/login";
-</script>
+    res.status(
+      401
+    ).send(`
+<!doctype html>
+<html>
+<head>
+<meta name="viewport"
+content="width=device-width,initial-scale=1">
+<title>Login Failed</title>
+</head>
+
+<body
+style="
+background:#080b10;
+color:white;
+font-family:Arial;
+text-align:center;
+padding-top:100px;
+"
+>
+
+<h2>❌ Wrong Login</h2>
+
+<p>
+Wrong dashboard username or password.
+</p>
+
+<a
+href="/login"
+style="color:#60a5fa"
+>
+Try Again
+</a>
+
+</body>
+</html>
 `);
   }
 );
@@ -1333,9 +1801,13 @@ location.href="/login";
 app.get(
   "/dashboard",
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     const online =
-      botStatus === "ONLINE";
+      botStatus ===
+      "ONLINE";
 
     const statusColor =
       online
@@ -1347,120 +1819,187 @@ app.get(
 
     res.send(`
 <!doctype html>
+
 <html>
+
 <head>
+
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="15">
+
+<meta
+name="viewport"
+content="width=device-width,initial-scale=1"
+>
+
+<meta
+http-equiv="refresh"
+content="15"
+>
+
 <title>Bot Dashboard</title>
 
 <style>
-*{box-sizing:border-box}
+
+*{
+  box-sizing:border-box;
+}
 
 body{
   margin:0;
+
   background:#070a0f;
+
   color:#f8fafc;
+
   font-family:Arial,sans-serif;
 }
 
 .container{
   width:94%;
+
   max-width:850px;
+
   margin:25px auto;
 }
 
 .header{
   display:flex;
+
   justify-content:space-between;
+
   align-items:center;
+
   gap:10px;
+
   margin-bottom:20px;
 }
 
 h1{
   margin:0;
+
   font-size:25px;
 }
 
 .card{
   background:#101722;
+
   border:1px solid #263244;
+
   border-radius:16px;
+
   padding:20px;
+
   margin-bottom:16px;
 }
 
 .title{
   font-weight:bold;
+
   font-size:17px;
+
   margin-bottom:15px;
 }
 
 .status{
   display:inline-flex;
+
   align-items:center;
+
   gap:8px;
+
   padding:7px 11px;
+
   border-radius:999px;
+
   background:#0b111b;
+
   border:1px solid #263244;
+
   font-size:13px;
 }
 
 .dot{
   width:9px;
+
   height:9px;
+
   border-radius:50%;
+
   background:${statusColor};
 }
 
 .account{
   display:grid;
-  grid-template-columns:1fr 1fr;
+
+  grid-template-columns:
+    1fr 1fr;
+
   gap:12px;
 }
 
 .info{
   background:#0a0f17;
+
   border:1px solid #1e293b;
+
   border-radius:12px;
+
   padding:14px;
 }
 
 .label{
   color:#64748b;
+
   font-size:12px;
+
   margin-bottom:5px;
 }
 
 .value{
   font-weight:bold;
+
   word-break:break-word;
 }
 
 textarea{
   width:100%;
+
   height:190px;
+
   resize:vertical;
+
   padding:13px;
+
   background:#080c13;
+
   color:#dbeafe;
+
   border:1px solid #334155;
+
   border-radius:11px;
+
   font-family:monospace;
+
   font-size:12px;
+
   outline:none;
 }
 
 button{
   border:0;
+
   border-radius:10px;
+
   padding:12px 17px;
+
   margin-top:10px;
+
   color:#fff;
+
   background:#2563eb;
+
   font-weight:bold;
+
   cursor:pointer;
 }
 
@@ -1474,261 +2013,367 @@ button:hover{
 
 .note{
   color:#94a3b8;
+
   font-size:13px;
+
   line-height:1.5;
 }
 
 .warning{
   padding:12px;
+
   border-radius:10px;
+
   background:#291a08;
+
   border:1px solid #854d0e;
+
   color:#fbbf24;
+
   font-size:13px;
+
   margin-top:12px;
 }
 
 .error{
   padding:12px;
+
   border-radius:10px;
+
   background:#2a0b0b;
+
   border:1px solid #7f1d1d;
+
   color:#fca5a5;
+
   font-size:13px;
+
   margin-top:12px;
 }
 
 @media(max-width:600px){
+
   .account{
     grid-template-columns:1fr;
   }
+
 }
+
 </style>
+
 </head>
 
 <body>
+
 <div class="container">
 
 <div class="header">
-  <div>
-    <h1>Bot Control Panel</h1>
-    <div class="note">
-      Messenger Bot Management
-    </div>
-  </div>
 
-  <a href="/logout">
-    <button class="logout">
-      Logout
-    </button>
-  </a>
+<div>
+
+<h1>
+Bot Control Panel
+</h1>
+
+<div class="note">
+Messenger Bot Management
 </div>
+
+</div>
+
+<a href="/logout">
+
+<button class="logout">
+Logout
+</button>
+
+</a>
+
+</div>
+
+<!-- STATUS -->
 
 <div class="card">
-  <div class="title">
-    Messenger Status
-  </div>
 
-  <div class="status">
-    <span class="dot"></span>
-    ${escapeHtml(botStatus)}
-  </div>
+<div class="title">
+Messenger Status
 </div>
+
+<div class="status">
+
+<span class="dot"></span>
+
+${escapeHtml(
+  botStatus
+)}
+
+</div>
+
+</div>
+
+<!-- ACCOUNT -->
 
 <div class="card">
-  <div class="title">
-    Bot Account
-  </div>
 
-  <div class="account">
-
-    <div class="info">
-      <div class="label">
-        ACCOUNT NAME
-      </div>
-
-      <div class="value">
-        ${
-          online
-            ? escapeHtml(
-                botName ||
-                "Loading..."
-              )
-            : "Not logged in"
-        }
-      </div>
-    </div>
-
-    <div class="info">
-      <div class="label">
-        BOT UID
-      </div>
-
-      <div class="value">
-        ${
-          online
-            ? escapeHtml(
-                botUserID
-              )
-            : "—"
-        }
-      </div>
-    </div>
-
-    <div class="info">
-      <div class="label">
-        MESSENGER
-      </div>
-
-      <div class="value">
-        ${
-          online
-            ? "🟢 Logged In"
-            : botStatus ===
-              "CONNECTING"
-              ? "🟡 Connecting..."
-              : "🔴 Logged Out"
-        }
-      </div>
-    </div>
-
-    <div class="info">
-      <div class="label">
-        PROCESS UPTIME
-      </div>
-
-      <div class="value">
-        ${uptimeText()}
-      </div>
-    </div>
-
-  </div>
-
-  ${
-    botError
-      ? `
-      <div class="error">
-        ${escapeHtml(
-          botError
-        )}
-      </div>
-      `
-      : ""
-  }
+<div class="title">
+Bot Account
 </div>
+
+<div class="account">
+
+<div class="info">
+
+<div class="label">
+ACCOUNT NAME
+</div>
+
+<div class="value">
+
+${
+  online
+    ? escapeHtml(
+        botName ||
+          "Loading..."
+      )
+    : "Not logged in"
+}
+
+</div>
+
+</div>
+
+<div class="info">
+
+<div class="label">
+BOT UID
+</div>
+
+<div class="value">
+
+${
+  online
+    ? escapeHtml(
+        botUserID
+      )
+    : "—"
+}
+
+</div>
+
+</div>
+
+<div class="info">
+
+<div class="label">
+MESSENGER
+</div>
+
+<div class="value">
+
+${
+  online
+    ? "🟢 Logged In"
+    : botStatus ===
+      "CONNECTING"
+      ? "🟡 Connecting..."
+      : "🔴 Logged Out"
+}
+
+</div>
+
+</div>
+
+<div class="info">
+
+<div class="label">
+PROCESS UPTIME
+</div>
+
+<div class="value">
+${uptimeText()}
+</div>
+
+</div>
+
+</div>
+
+${
+  botError
+    ? `
+<div class="error">
+
+${escapeHtml(
+  botError
+)}
+
+</div>
+`
+    : ""
+}
+
+</div>
+
+<!-- BOT LOGIN -->
 
 <div class="card">
-  <div class="title">
-    Login Bot
-  </div>
 
-  <p class="note">
-    I-paste dito ang Facebook AppState/C3C
-    session JSON. Kapag valid, automatic na
-    ita-try i-login ang bot at ipapakita ang
-    account name at UID.
-  </p>
-
-  <form
-    method="POST"
-    action="/bot-login"
-  >
-
-    <textarea
-      name="appstate"
-      placeholder='[{"key":"c_user","value":"..."},{"key":"xs","value":"..."}]'
-      required
-    ></textarea>
-
-    <button type="submit">
-      🔐 Login Bot
-    </button>
-
-  </form>
-
-  <div class="warning">
-    Huwag mag-paste ng Facebook password.
-    AppState/C3C session lamang ang ilagay.
-    Huwag ding i-share ang session sa ibang tao.
-  </div>
+<div class="title">
+Login Bot
 </div>
+
+<p class="note">
+
+I-paste dito ang Facebook
+AppState/C3C session JSON.
+
+Kapag valid, automatic na
+ita-try i-login ang bot.
+
+Pag successful, makikita mo
+ang account name, UID, at
+Messenger status.
+
+</p>
+
+<form
+method="POST"
+action="/bot-login"
+>
+
+<textarea
+name="appstate"
+placeholder='[{"key":"c_user","value":"..."},{"key":"xs","value":"..."}]'
+required
+></textarea>
+
+<button
+type="submit"
+>
+🔐 Login Bot
+</button>
+
+</form>
+
+<div class="warning">
+
+Huwag mag-paste ng Facebook
+password.
+
+AppState/C3C session lamang.
+
+Huwag ding i-share ang
+session sa ibang tao.
+
+</div>
+
+</div>
+
+<!-- BOT CONTROLS -->
 
 <div class="card">
-  <div class="title">
-    Bot Controls
-  </div>
 
-  <form
-    method="POST"
-    action="/bot-logout"
-  >
-    <button
-      type="submit"
-      style="background:#dc2626"
-    >
-      Logout Bot
-    </button>
-  </form>
+<div class="title">
+Bot Controls
 </div>
+
+<form
+method="POST"
+action="/bot-logout"
+>
+
+<button
+type="submit"
+style="background:#dc2626"
+>
+
+Logout Bot
+
+</button>
+
+</form>
+
+</div>
+
+<!-- SYSTEM -->
 
 <div class="card">
-  <div class="title">
-    System
-  </div>
 
-  <div class="account">
+<div class="title">
+System
+</div>
 
-    <div class="info">
-      <div class="label">
-        NODE
-      </div>
+<div class="account">
 
-      <div class="value">
-        ${escapeHtml(
-          process.version
-        )}
-      </div>
-    </div>
+<div class="info">
 
-    <div class="info">
-      <div class="label">
-        PLATFORM
-      </div>
+<div class="label">
+NODE
+</div>
 
-      <div class="value">
-        ${escapeHtml(
-          process.platform
-        )}
-      </div>
-    </div>
+<div class="value">
 
-    <div class="info">
-      <div class="label">
-        ARCHITECTURE
-      </div>
+${escapeHtml(
+  process.version
+)}
 
-      <div class="value">
-        ${escapeHtml(
-          process.arch
-        )}
-      </div>
-    </div>
-
-    <div class="info">
-      <div class="label">
-        ACTIVE THREADS
-      </div>
-
-      <div class="value">
-        ${activeThreads.size}
-      </div>
-    </div>
-
-  </div>
 </div>
 
 </div>
+
+<div class="info">
+
+<div class="label">
+PLATFORM
+</div>
+
+<div class="value">
+
+${escapeHtml(
+  process.platform
+)}
+
+</div>
+
+</div>
+
+<div class="info">
+
+<div class="label">
+ARCHITECTURE
+</div>
+
+<div class="value">
+
+${escapeHtml(
+  process.arch
+)}
+
+</div>
+
+</div>
+
+<div class="info">
+
+<div class="label">
+ACTIVE THREADS
+</div>
+
+<div class="value">
+
+${activeThreads.size}
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
 </body>
+
 </html>
 `);
   }
@@ -1736,64 +2381,352 @@ button:hover{
 
 /*
  * ============================================================
- * BOT LOGIN ROUTE
+ * BOT LOGIN FROM DASHBOARD
  * ============================================================
  */
 
 app.post(
   "/bot-login",
   requireAuth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       const raw =
         String(
           req.body.appstate ||
-          ""
+            ""
         ).trim();
 
       if (!raw) {
         throw new Error(
-          "Walang AppState/C3C na inilagay."
+          "Ilagay muna ang AppState/C3C."
         );
       }
 
       /*
-       * Validate + save.
+       * Parse JSON if possible.
+       * Otherwise use cookie string.
        */
-      saveSession(raw);
+      let sessionValue;
+
+      try {
+        sessionValue =
+          JSON.parse(
+            raw
+          );
+      } catch (_) {
+        sessionValue =
+          raw;
+      }
 
       /*
-       * Login immediately.
+       * Validate.
        */
-      const parsed =
-        JSON.parse(raw);
+      normalizeSession(
+        sessionValue
+      );
 
+      /*
+       * LOGIN FIRST.
+       */
       const result =
         await loginBot(
-          parsed
+          sessionValue
         );
 
+      /*
+       * SAVE ONLY AFTER
+       * SUCCESSFUL LOGIN.
+       */
+      saveSession(
+        sessionValue
+      );
+
       res.send(`
-<script>
-alert(
-  "Messenger Logged In!\\n\\nAccount: ${escapeHtml(
-    result.name
-  )}\\nUID: ${escapeHtml(
-    result.uid
-  )}"
-);
-location.href="/dashboard";
-</script>
+<!doctype html>
+
+<html>
+
+<head>
+
+<meta
+name="viewport"
+content="width=device-width,initial-scale=1"
+>
+
+<title>Login Successful</title>
+
+<style>
+
+body{
+  margin:0;
+
+  min-height:100vh;
+
+  display:flex;
+
+  align-items:center;
+
+  justify-content:center;
+
+  background:#070a0f;
+
+  color:white;
+
+  font-family:Arial,sans-serif;
+}
+
+.card{
+  width:90%;
+
+  max-width:420px;
+
+  padding:25px;
+
+  border-radius:16px;
+
+  background:#101722;
+
+  border:1px solid #263244;
+
+  text-align:center;
+}
+
+.ok{
+  font-size:50px;
+}
+
+.name{
+  font-size:22px;
+
+  font-weight:bold;
+
+  margin:10px 0;
+}
+
+.uid{
+  color:#94a3b8;
+
+  word-break:break-all;
+
+  font-size:13px;
+}
+
+.status{
+  display:inline-block;
+
+  margin-top:15px;
+
+  padding:8px 13px;
+
+  border-radius:20px;
+
+  background:#052e16;
+
+  color:#4ade80;
+}
+
+button{
+  margin-top:20px;
+
+  padding:12px 20px;
+
+  border:0;
+
+  border-radius:10px;
+
+  background:#2563eb;
+
+  color:white;
+
+  font-weight:bold;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+<div class="ok">
+✓
+</div>
+
+<div class="name">
+
+${escapeHtml(
+  result.name
+)}
+
+</div>
+
+<div class="uid">
+
+UID:
+${escapeHtml(
+  result.uid
+)}
+
+</div>
+
+<div class="status">
+
+🟢 Messenger Logged In
+
+</div>
+
+<br>
+
+<button
+onclick="location.href='/dashboard'"
+>
+
+Open Dashboard
+
+</button>
+
+</div>
+
+</body>
+
+</html>
 `);
-    } catch (error) {
-      res.status(400).send(`
-<script>
-alert("Bot login failed: ${escapeHtml(
+    } catch (
+      error
+    ) {
+      console.error(
+        "[BOT LOGIN] Dashboard login failed:",
+        error
+      );
+
+      botApi =
+        null;
+
+      botUserID =
+        "";
+
+      botName =
+        "";
+
+      botStatus =
+        "OFFLINE";
+
+      botError =
         error?.message ||
-        String(error)
-      )}");
-location.href="/dashboard";
-</script>
+        String(error);
+
+      res.status(
+        400
+      ).send(`
+<!doctype html>
+
+<html>
+
+<head>
+
+<meta
+name="viewport"
+content="width=device-width,initial-scale=1"
+>
+
+<title>Login Failed</title>
+
+<style>
+
+body{
+  margin:0;
+
+  min-height:100vh;
+
+  display:flex;
+
+  align-items:center;
+
+  justify-content:center;
+
+  background:#070a0f;
+
+  color:white;
+
+  font-family:Arial,sans-serif;
+}
+
+.card{
+  width:90%;
+
+  max-width:420px;
+
+  padding:25px;
+
+  border-radius:16px;
+
+  background:#101722;
+
+  border:1px solid #7f1d1d;
+
+  text-align:center;
+}
+
+.error{
+  color:#fca5a5;
+
+  margin:15px 0;
+
+  word-break:break-word;
+}
+
+button{
+  padding:12px 20px;
+
+  border:0;
+
+  border-radius:10px;
+
+  background:#2563eb;
+
+  color:white;
+
+  font-weight:bold;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+<h2>
+❌ Bot Login Failed
+</h2>
+
+<div class="error">
+
+${escapeHtml(
+  error?.message ||
+    String(error)
+)}
+
+</div>
+
+<button
+onclick="location.href='/dashboard'"
+>
+
+Back to Dashboard
+
+</button>
+
+</div>
+
+</body>
+
+</html>
 `);
     }
   }
@@ -1808,30 +2741,49 @@ location.href="/dashboard";
 app.post(
   "/bot-logout",
   requireAuth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
         botApi &&
         typeof botApi.logout ===
           "function"
       ) {
-        await new Promise(resolve => {
-          try {
-            botApi.logout(() => {
+        await new Promise(
+          resolve => {
+            try {
+              botApi.logout(
+                () => {
+                  resolve();
+                }
+              );
+            } catch (_) {
               resolve();
-            });
-          } catch (_) {
-            resolve();
+            }
           }
-        });
+        );
       }
     } catch (_) {}
 
-    botApi = null;
-    botUserID = "";
-    botName = "";
-    botStatus = "OFFLINE";
-    botError = "";
+    botApi =
+      null;
+
+    botUserID =
+      "";
+
+    botName =
+      "";
+
+    botStatus =
+      "OFFLINE";
+
+    botError =
+      "";
+
+    botLoginAt =
+      null;
 
     res.redirect(
       "/dashboard"
@@ -1848,22 +2800,33 @@ app.post(
 app.get(
   "/api/status",
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     res.json({
       bot: {
-        status: botStatus,
+        status:
+          botStatus,
+
         loggedIn:
           botStatus ===
           "ONLINE",
+
         name:
-          botName || null,
+          botName ||
+          null,
+
         uid:
-          botUserID || null,
+          botUserID ||
+          null,
+
         messenger:
           botStatus ===
           "ONLINE"
             ? "Logged In"
             : "Logged Out",
+
         loginAt:
           botLoginAt
             ? new Date(
@@ -1875,12 +2838,16 @@ app.get(
       system: {
         uptime:
           process.uptime(),
+
         node:
           process.version,
+
         platform:
           process.platform,
+
         arch:
           process.arch,
+
         memory:
           process.memoryUsage()
       },
@@ -1888,8 +2855,10 @@ app.get(
       banat: {
         activeThreads:
           activeThreads.size,
+
         queuedThreads:
           threadQueues.size,
+
         globalActive
       }
     });
@@ -1898,13 +2867,16 @@ app.get(
 
 /*
  * ============================================================
- * LOGOUT DASHBOARD ADMIN
+ * ADMIN LOGOUT
  * ============================================================
  */
 
 app.get(
   "/logout",
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
     req.session.destroy(
       () => {
         res.redirect(
@@ -1917,11 +2889,7 @@ app.get(
 
 /*
  * ============================================================
- * HEALTH SERVER + DASHBOARD
- * ============================================================
- *
- * ONE PORT ONLY.
- * Railway can use this service directly.
+ * SERVER
  * ============================================================
  */
 
@@ -1939,13 +2907,13 @@ server.listen(
     );
 
     console.log(
-      `[DASHBOARD] Admin username: ${ADMIN_USER}`
+      `[DASHBOARD] Login: ${ADMIN_USER}`
     );
 
     /*
-     * Optional automatic login from
-     * Railway environment variable
-     * or existing appstate.json.
+     * Automatic login if
+     * FB_APPSTATE / FB_COOKIES
+     * or appstate.json exists.
      */
     try {
       const saved =
@@ -1956,7 +2924,9 @@ server.listen(
           "[BOT] Saved session found. Attempting automatic login..."
         );
 
-        loginBot(saved).catch(
+        loginBot(
+          saved
+        ).catch(
           error => {
             console.error(
               "[BOT] Automatic login failed:",
@@ -1970,7 +2940,9 @@ server.listen(
           "[BOT] No saved session. Login from dashboard."
         );
       }
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[BOT] Saved session error:",
         error?.message ||
