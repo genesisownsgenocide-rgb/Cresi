@@ -8,7 +8,7 @@
     "start": "node auto.js",
     "bot": "node index.js",
     "dashboard": "node dashboard.js",
-    "check": "node --check index.js && node --check dashboard.js && node --check triggers.js && node --check banat-human.js && node --check human-mimic.js && node --check human-delay.js && node --check human-typing.js"
+    "check": "node --check index.js && node --check dashboard.js && node --check auto.js"
   },
   "engines": {
     "node": ">=18"
