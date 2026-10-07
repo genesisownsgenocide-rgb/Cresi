@@ -1,21 +1,19 @@
 {
-  "name": "banat-only-bot",
+  "name": "cresi-sinzu-ai",
   "version": "1.0.0",
-  "private": false,
-  "description": "Messenger bot with integrated login dashboard.",
+  "private": true,
+  "description": "SINZU AI Messenger Command Center",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "bot": "node index.js",
-    "dashboard": "node index.js",
     "check": "node --check index.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "express-session": "^1.18.0",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
     "ws3-fca": "2.0.1"
   }
 }
