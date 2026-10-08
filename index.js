@@ -15,6 +15,7 @@
  *   /api/status
  *   /api/connect
  *   /api/disconnect
+ *   /health (for auto-reconnect/self-ping)
  *
  * MESSENGER COMMANDS:
  *   !banat on
@@ -22,12 +23,6 @@
  *   !banat toggle
  *   !banat status
  *   !banat help
- *
- * NOTE:
- *   !setallnickname
- *   !lockgc
- *   !unlockgc
- *   remain Messenger-side commands.
  */
 
 const fs = require("fs");
@@ -61,11 +56,17 @@ const PORT = Number(process.env.PORT || 10000);
 
 /*
  * Dashboard credentials.
- *
- * These are intentionally hardcoded as requested.
  */
 const DASHBOARD_USERNAME = "Admin";
 const DASHBOARD_PASSWORD = "sinzuontop";
+
+/*
+ * ADMIN RESTRICTION CONFIG
+ * Ilagay dito ang iyong totoong Facebook User ID para ikaw lang ang pwedeng mag-kontrol.
+ */
+const ADMIN_IDS = [
+  "ILAGAY_MO_DITO_YUNG_FB_USER_ID_MO"
+];
 
 
 /* BANAT SETTINGS */
@@ -1115,6 +1116,14 @@ function onMessage(
 
   if (!body) {
     return;
+  }
+
+  // =========================================================
+  // ADMIN-ONLY SECURITY CHECK (Haharangin kung hindi ikaw)
+  // =========================================================
+  const senderID = String(event.senderID || "");
+  if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) {
+    return; // Huwag pansinin ang mensahe kung hindi galing sa Admin ID mo
   }
 
 
@@ -2226,7 +2235,7 @@ form.addEventListener(
     } catch (error) {
 
       errorBox.textContent =
-        "Connection error. Check the Railway deployment logs.";
+        "Connection error. Check the deployment logs.";
 
       errorBox.style.display =
         "block";
@@ -2781,10 +2790,6 @@ button:disabled {
 
       Paste your exported C3C AppState JSON data below.
 
-      The dashboard does not display
-      the submitted session after
-      connecting.
-
     </div>
 
 
@@ -2830,12 +2835,6 @@ button:disabled {
 
     </div>
 
-
-    <div class="small">
-      Session data is sent only when
-      you press CONNECT.
-    </div>
-
   </div>
 
 
@@ -2853,33 +2852,6 @@ button:disabled {
 !banat toggle
 !banat status
 !banat help
-
-    </div>
-
-  </div>
-
-
-  <div class="card">
-
-    <h2>
-      Group Commands
-    </h2>
-
-
-    <div class="commands">
-
-!setallnickname
-!lockgc
-!unlockgc
-
-    </div>
-
-
-    <div class="notice">
-
-      These remain Messenger commands.
-      They are not executed from the
-      dashboard.
 
     </div>
 
@@ -4009,7 +3981,7 @@ const server =
 
 
         /* =========================================
-           HEALTH CHECK
+           HEALTH CHECK (Para sa UptimeRobot)
         ========================================= */
 
         if (
