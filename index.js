@@ -15,7 +15,7 @@
  *   /api/status
  *   /api/connect
  *   /api/disconnect
- *   /health (for auto-reconnect/self-ping)
+ *   /health (with built-in watchdog & memory status)
  *
  * MESSENGER COMMANDS (Admin Only):
  *   !banat on
@@ -1876,6 +1876,30 @@ function readBody(
       );
     }
   );
+}
+
+
+/* =========================================================
+   WATCHDOG / SELF-PING KEEPALIVE
+========================================================= */
+
+const WATCHDOG_INTERVAL_MS = 4 * 60 * 1000; // Tuwing 4 minuto
+
+function startWatchdog() {
+  setInterval(async () => {
+    try {
+      const pingUrl = `http://127.0.0.1:${PORT}/health`;
+      
+      const response = await fetch(pingUrl, { cache: "no-store" });
+      const data = await response.json();
+      
+      console.log(`[WATCHDOG] Self-ping success: status ${response.status}, bot state: ${data.bot}`);
+    } catch (error) {
+      console.error("[WATCHDOG] Self-ping failed:", error?.message || error);
+    }
+  }, WATCHDOG_INTERVAL_MS);
+
+  console.log("[WATCHDOG] Auto-ping watchdog initialized (interval: 4 mins).");
 }
 
 
@@ -3981,6 +4005,7 @@ const server =
           pathname ===
             "/health"
         ) {
+          const memoryUsage = process.memoryUsage();
 
           sendJSON(
             res,
@@ -3995,10 +4020,18 @@ const server =
               bot:
                 !!api
                   ? "connected"
-                  : "disconnected"
+                  : "disconnected",
+
+              uptime: Math.floor(process.uptime()),
+
+              memory: {
+                rssMB: Math.round(memoryUsage.rss / 1024 / 1024),
+                heapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024)
+              },
+
+              timestamp: new Date().toISOString()
             }
           );
-
 
           return;
         }
@@ -4071,6 +4104,9 @@ server.listen(
     console.log(
       "[DASHBOARD] password configured."
     );
+
+    // Simulan ang auto-ping watchdog pag-andar ng server
+    startWatchdog();
   }
 );
 
