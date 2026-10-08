@@ -65,7 +65,7 @@ const DASHBOARD_PASSWORD = "sinzuontop";
  * Ilagay dito ang iyong totoong Facebook User ID para ikaw lang ang pwedeng mag-kontrol.
  */
 const ADMIN_IDS = [
-  "ILAGAY_MO_DITO_YUNG_FB_USER_ID_MO"
+  "61595204307407"
 ];
 
 
