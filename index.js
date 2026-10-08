@@ -1073,188 +1073,179 @@ async function sendBanat(
 
 
 /* =========================================================
-   MESSAGE HANDLER
+   MESSAGE HANDLER (SAFE ERROR TRAPPING)
 ========================================================= */
 
 function onMessage(
   apiInstance,
   event
 ) {
-
-  if (!event) {
-    return;
-  }
-
-
-  if (
-    event.type &&
-    event.type !== "message"
-  ) {
-    return;
-  }
-
-
-  if (
-    event.senderID &&
-    botUserID &&
-    String(event.senderID) ===
-      String(botUserID)
-  ) {
-    return;
-  }
-
-
-  const body =
-    String(
-      event.body || ""
-    ).trim();
-
-
-  if (!body) {
-    return;
-  }
-
-
-  const senderID = String(event.senderID || "");
-
-  messageCount++;
-
-
-  /*
-   * BANAT COMMANDS (Admin Only)
-   */
-
-  if (
-    isBanatCommand(body)
-  ) {
-    if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) {
-      return; // Dedma kung hindi ikaw ang nag-command
+  try {
+    if (!event) {
+      return;
     }
 
-    commandCount++;
+
+    if (
+      event.type &&
+      event.type !== "message"
+    ) {
+      return;
+    }
 
 
-    handleBanatCommand(
-      apiInstance,
-      event,
-      body
-    );
+    if (
+      event.senderID &&
+      botUserID &&
+      String(event.senderID) ===
+        String(botUserID)
+    ) {
+      return;
+    }
 
 
-    return;
-  }
+    const body =
+      String(
+        event.body || ""
+      ).trim();
 
 
-  const threadID =
-    String(event.threadID);
+    if (!body) {
+      return;
+    }
 
 
-  const active =
-    activeThreads.has(
-      threadID
-    ) ||
-    isBanatConversationModeActive(
-      threadID
-    );
+    const senderID = String(event.senderID || "");
+
+    messageCount++;
 
 
-  const target =
-    classifyBanatTarget({
-      event,
-      body,
-      botID:
-        botUserID
-    });
+    /*
+     * BANAT COMMANDS (Admin Only)
+     */
+
+    if (
+      isBanatCommand(body)
+    ) {
+      if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) {
+        return; 
+      }
+
+      commandCount++;
 
 
-  /*
-   * ACTIVE BANAT THREAD (Rereplayan ang lahat sa GC)
-   */
-
-  if (active) {
-
-    console.log(
-      `[BANAT] active message in ${threadID} from ${
-        event.senderID ||
-        "unknown"
-      }`
-    );
-
-
-    const reply =
-      getTriggerReply(
-        body,
-        threadID
-      ) ||
-      getBanatConversationReply(
-        body,
-        threadID
-      );
-
-
-    if (reply) {
-
-      sendBanat(
+      handleBanatCommand(
         apiInstance,
         event,
-        reply
-      )
-        .catch(error => {
-
-          console.error(
-            "[BANAT] reply error:",
-            error
-          );
-
-        });
-
-    } else {
-
-      console.warn(
-        `[BANAT] no reply generated for active message in ${threadID}`
+        body
       );
+
+
+      return;
     }
 
 
-    return;
-  }
+    const threadID =
+      String(event.threadID);
 
 
-  /*
-   * TARGETED BANAT
-   */
-
-  if (
-    target.shouldRespond
-  ) {
-
-    const reply =
-      getTriggerReply(
-        body,
+    const active =
+      activeThreads.has(
         threadID
       ) ||
-      getBanatConversationReply(
-        body,
+      isBanatConversationModeActive(
         threadID
       );
 
 
-    if (reply) {
-
-      sendBanat(
-        apiInstance,
+    const target =
+      classifyBanatTarget({
         event,
-        reply
-      )
-        .catch(error => {
+        body,
+        botID:
+          botUserID
+      });
 
-          console.error(
-            "[BANAT]",
-            error
-          );
 
-        });
+    /*
+     * ACTIVE BANAT THREAD (Rereplayan ang lahat sa GC)
+     */
+
+    if (active) {
+
+      console.log(
+        `[BANAT] active message in ${threadID} from ${
+          event.senderID ||
+          "unknown"
+        }`
+      );
+
+
+      const reply =
+        (typeof getTriggerReply === "function" ? getTriggerReply(body, threadID) : null) ||
+        (typeof getBanatConversationReply === "function" ? getBanatConversationReply(body, threadID) : null);
+
+
+      if (reply) {
+
+        sendBanat(
+          apiInstance,
+          event,
+          reply
+        )
+          .catch(error => {
+
+            console.error(
+              "[BANAT] reply error details:",
+              error?.message || JSON.stringify(error) || error
+            );
+
+          });
+
+      } else {
+
+        console.warn(
+          `[BANAT] no reply generated for active message in ${threadID}`
+        );
+      }
+
+
+      return;
     }
+
+
+    /*
+     * TARGETED BANAT
+     */
+
+    if (
+      target && target.shouldRespond
+    ) {
+
+      const reply =
+        (typeof getTriggerReply === "function" ? getTriggerReply(body, threadID) : null) ||
+        (typeof getBanatConversationReply === "function" ? getBanatConversationReply(body, threadID) : null);
+
+
+      if (reply) {
+
+        sendBanat(
+          apiInstance,
+          event,
+          reply
+        )
+          .catch(error => {
+
+            console.error(
+              "[BANAT] target error details:",
+              error?.message || JSON.stringify(error) || error
+            );
+
+          });
+      }
+    }
+  } catch (err) {
+    console.error("[CRITICAL MESSAGE HANDLER ERROR]:", err?.message || JSON.stringify(err) || err);
   }
 }
 
@@ -1366,8 +1357,8 @@ function start(
       } catch (error) {
 
         console.error(
-          "[BANAT] message handler error:",
-          error
+          "[BANAT] outer message listener error:",
+          error?.message || JSON.stringify(error) || error
         );
       }
     }
@@ -1880,7 +1871,7 @@ function readBody(
 
 
 /* =========================================================
-   WATCHDOG / SELF-PING KEEPALIVE
+   WATCHDOG / SELF-PING KEEPALIVE (FIXED URL)
 ========================================================= */
 
 const WATCHDOG_INTERVAL_MS = 4 * 60 * 1000; // Tuwing 4 minuto
@@ -1888,6 +1879,7 @@ const WATCHDOG_INTERVAL_MS = 4 * 60 * 1000; // Tuwing 4 minuto
 function startWatchdog() {
   setInterval(async () => {
     try {
+      // Gumagamit na ng tamang 127.0.0.1 at dynamic PORT para iwas ECONNREFUSED ::1 error
       const pingUrl = `http://127.0.0.1:${PORT}/health`;
       
       const response = await fetch(pingUrl, { cache: "no-store" });
@@ -1895,11 +1887,11 @@ function startWatchdog() {
       
       console.log(`[WATCHDOG] Self-ping success: status ${response.status}, bot state: ${data.bot}`);
     } catch (error) {
-      console.error("[WATCHDOG] Self-ping failed:", error?.message || error);
+      console.error("[WATCHDOG] Ping failed:", error?.message || error);
     }
   }, WATCHDOG_INTERVAL_MS);
 
-  console.log("[WATCHDOG] Auto-ping watchdog initialized (interval: 4 mins).");
+  console.log(`[WATCHDOG] Auto-ping watchdog initialized on port ${PORT} (interval: 4 mins).`);
 }
 
 
