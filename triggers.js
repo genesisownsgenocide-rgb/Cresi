@@ -1,225 +1,193 @@
 "use strict";
 
-const {
-  rememberBanatReply,
-  pickBanatReply
-} = require("./banat-memory");
+const { rememberBanatReply, pickBanatReply } = require("./banat-memory");
 
-// Helper para makagawa ng 250 organic, parang-taong banat na walang kapareho
-function generateHumanLikePool(rawSeeds, targetCount = 250) {
-  const generated = [...rawSeeds];
-
-  // Mga panapos na parang tunay na tropa ang kausap sa chat
-  const humanFlavors = [
-    "haist ewan ko sa'yo",
-    "ramdam ko yung kaba mo e",
-    "ayos ka lang ba kuya?",
-    "delikado ka dyan sa ugali mo",
-    "parang tanga lang e",
-    "ikaw na naman ang naghahanap ng sakit ng ulo",
-    "himbing pa ng tulog ng mga problema mo oh",
-    "wag mo akong simulan ha",
-    "halata namang wala kang maisip na matino",
-    "ganyan ka na lang palagi, walang pinagbago",
-    "ano na namangtrip mo sa buhay?",
-    "ramdam na ramdam ko yung pilit mong hirit",
-    "huminga ka muna bago ka magpakita rito",
-    "umayos ka nga, hindi natinka ka-close",
-    "kaya ka walang kaibigan e"
-  ];
-
-  const extensions = [
-    "tapos magrereklamo ka",
-    "sabagay sanay ka naman maging sablay",
-    "sunod na tanong mo, galingan mo na ha",
-    "tawa na sana kami kaso hindi nakakatuwa",
-    "bili ka na rin ng hiya pag may time",
-    "asado ka namang may maniniwala sa'yo",
-    "balita ko hinahanap ka na sa inyo",
-    "puro ka na lang satsat sa totoo lang"
-  ];
-
-  let fIndex = 0;
-  let eIndex = 0;
-
-  while (generated.length < targetCount) {
-    const seed = rawSeeds[generated.length % rawSeeds.length];
-    const flavor = humanFlavors[fIndex % humanFlavors.length];
-    const ext = extensions[eIndex % extensions.length];
-
-    // Ginawang parang totoong chat message ang format (walang robot-like symbols)
-    const naturalLine = `${seed} ${flavor}, ${ext}`;
-
-    if (!generated.includes(naturalLine)) {
-      generated.push(naturalLine);
-    }
-
-    fIndex++;
-    if (fIndex % humanFlavors.length === 0) {
-      eIndex++;
-    }
+// Banat-only local reply pools. Nothing here calls an AI service.
+const groups = [
+  {
+    name: "bot",
+    triggers: ["bot", "robot", "ai"],
+    replies: [
+      "ikaw bot",
+      "mama mo bot",
+      "bot nang bot, aning ka?",
+      "ikaw mukhang bot tanga",
+      "wag aning sa ope",
+      "bot nganii yung lolo mo",
+      "ona bot na",
+      "pumapalag ka pala sa bot e",
+      "may bot pala?",
+      "asan nga yung bot, kulit mo",
+      "tangina, paulit-ulit",
+      "paulit-ulit ka ba?",
+      "bot ka nang bot, nagiging meme ka na",
+      "bobo, wala akong pake sa sinasabi mo",
+      "edi bot, kwento mo 'yan",
+      "amoy basang aso tong kumag na 'to",
+      "puta, baho mo, layo ka nga"
+    ]
+  },
+  {
+    name: "trash-talk",
+    triggers: ["weak", "laro", "tanginamo", "lala", "patawa", "gago", "bobo", "tanga", "hahahaa", "pake ko", "sino yan"],
+    replies: [
+      "ang baho mo po, baby 😭💕",
+      "baby, explain mo po 'yang kabobohan mo.",
+      "baby, ano po 'yang tukmol ka?",
+      "baby naman, didn't I tell you po 'wag kang tanga?",
+      "hala po, si baby nadapa dahil sa kabobohan niya.",
+      "baby, cute mo po kapag mali ka.",
+      "baby, ang tapang mo po para sa taong ganyan ka-cute.",
+      "baby, saan mo po hinugot 'yang confidence mo?",
+      "baby, may resibo ka po ba o vibes lang?",
+      "baby, ang cute po ng yabang mo.",
+      "baby, pwede bang magpahinga ka muna sa pagiging tanga? 😭",
+      "baby, bakit po parang naka-airplane mode utak mo?",
+      "baby, nag-iisip ka po ba o nagpapacute lang?",
+      "baby, ang lakas mo po magtalk para sa ganyang kaliit na point.",
+      "baby, tuloy mo lang po, natutuwa akong panoorin kang malito.",
+      "baby, may tutorial po ba para maintindihan kita?",
+      "baby, ang ganda po ng confidence mo, sayang wala sa tamang lugar.",
+      "baby, bakit po parang ikaw mismo di convinced sa sinabi mo?",
+      "baby, behave po, ang cute mo na nga, makulit ka pa.",
+      "baby, ang kulit mo po, pero sige cute ka naman.",
+      "baby, kailangan mo po ba ng hug bago ka ulit magsalita?",
+      "baby, calm down po, baka maubos ang cute points mo.",
+      "baby, ang dramatic mo po, parang teleserye.",
+      "baby, bakit po every sentence mo may plot twist?",
+      "baby, nag-practice ka po ba maging makulit?",
+      "baby, ikaw na po ang certified little menace ko.",
+      "baby, ang lakas ng aura mo po, kaso naligaw.",
+      "baby, gusto mo po bang tamaan kita ng lambing?",
+      "baby, ang gulo mo po, pero adorable somehow.",
+      "baby, one brain cell at a time lang po, please.",
+      "baby, wag po masyadong seryoso, bagay sa'yo ang pagiging cute na sablay.",
+      "baby, may appointment ka po ba sa kabobohan today?",
+      "baby, ang sipag mo po gumawa ng problema.",
+      "baby, proud ka po talaga sa ganyang take?",
+      "baby, ang confidence mo po parang unlimited data.",
+      "baby, ang logic mo po naka-trial version.",
+      "baby, nag-buffer po ba utak mo?",
+      "baby, bakit po ikaw ang pinaka-confident na walang point?",
+      "baby, ang cute po ng argument mo, pero hindi convincing.",
+      "baby, sige po, explain mo pa, gusto kong marinig ang sequel.",
+      "baby, ang haba po ng speech mo, nasaan ang point?",
+      "baby, may point ka po ba o nagbabakasyon?",
+      "baby, balik po tayo sa reality, miss na kita doon.",
+      "baby, ang layo po ng sagot mo sa tanong.",
+      "baby, ikaw po ba ang final boss ng unnecessary replies?",
+      "baby, ang cute mo po kapag trying hard.",
+      "baby, don't worry po, tutulungan kitang hanapin ang point mo.",
+      "baby, nawawala po ba ang common sense mo kapag cute ka?",
+      "baby, bakit po parang confidence muna bago utak?",
+      "baby, ang tapang mo po, gusto mo ba ng forehead kiss?",
+      "baby, wag ka po magalit, bagay sa'yo ang pikon.",
+      "baby, ang cute po ng tampo mo, kaso mali ka pa rin.",
+      "baby, okay po, noted ang kabobohan.",
+      "baby, sige po, ikaw na ang CEO ng nonsense.",
+      "baby, may citation po ba 'yang claim mo?",
+      "baby, source po? o galing lang sa imagination?",
+      "baby, ang effort po, pero saan napunta ang sense?",
+      "baby, ang daldal mo po, pero sige, favorite kita.",
+      "baby, pwede po bang tumigil ka muna? nami-miss ko kasi katahimikan.",
+      "baby, ang ingay mo po, pero cute so pagbibigyan kita.",
+      "baby, bakit po parang hobby mo akong inisin?",
+      "baby, ikaw po ba ang scheduled interruption ko today?",
+      "baby, ang dramatic mo po, gusto mo soundtrack?",
+      "baby, may script po ba tayo o improv lang talaga kabobohan mo?",
+      "baby, ang confident mo po, parang may backup brain.",
+      "baby, ang cute mong magpanggap na tama po.",
+      "baby, sige po, defend your thesis of nonsense.",
+      "baby, hug muna po bago natin ayusin ang logic.",
+      "baby, breathe po, hindi ka hinahabol ng facts.",
+      "baby, relax po, hindi contest ang pagiging tama.",
+      "baby, acceptance po muna bago confidence.",
+      "baby, GPS po ba utak mo? bakit off-route?",
+      "baby, turn left po sa common sense.",
+      "baby, recalculating po ang logic mo.",
+      "baby, destination: tamang sagot. ETA: unknown.",
+      "baby, may detour po yata 'yang argument mo.",
+      "baby, bakit po parang side quest lahat ng sagot mo?",
+      "baby, ang reply mo po nag-lag sa landing.",
+      "baby, bakit po every comeback mo may loading screen?",
+      "baby, ang banat mo po cute, parang ikaw.",
+      "baby, sige po, roast mo pa ako, nakakatuwa ka.",
+      "baby, ang yabang mo po, gusto mo bang i-redeem sa lambing?",
+      "baby, obvious po na gusto mo ng attention.",
+      "baby, nakuha mo na po attention ko, happy ka na?",
+      "baby, congratulations po, ikaw ang little problem of the day.",
+      "baby, ang galing mong manggulo po.",
+      "baby, may medal po ba sa pagiging makulit? deserve mo.",
+      "baby, ang kulit mo po, pero don't stop.",
+      "baby, ang cute mong magpanggap na tama.",
+      "baby, ang taas po ng confidence, ang baba ng accuracy.",
+      "baby, perfect po ang delivery, questionable ang content.",
+      "baby, ang smooth mo po magsalita, sayang sablay ang logic.",
+      "baby, ang point mo po nagtatago yata.",
+      "baby, baka kailangan po natin ng search party para sa logic mo.",
+      "baby, ang argumento mo po may sariling side quest.",
+      "baby, saan po nag-road trip ang common sense?",
+      "baby, ang reply mo po nag-lag sa landing.",
+      "baby, ikaw po talaga ang definition ng cute disaster."
+    ]
+  },
+  {
+    name: "jaiden",
+    triggers: ["jaiden"],
+    replies: [
+      "jaiden na naman",
+      "al-bai-no",
+      "bai-gone",
+      "bai-tamins",
+      "one bai one",
+      "jaiden, yung mukhang paa ba?",
+      "la, jaiden ulit",
+      "jaiden and his broke boys era",
+      "jaiden mukhang nahulugan langka e",
+      "iyak si gago",
+      "pake ko nga?",
+      "turo mo sino nag tanong",
+      "bilang ka muna",
+      "moka ka libro",
+      "moka ma fan",
+      "moka ka mama mo",
+      "moka ka lapis",
+      "moka ka tiles",
+      "moka ka bahay",
+      "moka ka semento",
+      "moka ka aspalto",
+      "moka ka tanga",
+      "moka ka gago"
+    ]
   }
-
-  return generated.slice(0, targetCount);
-}
-
-// Mga natural at makataong raw seeds para sa bawat sitwasyon
-const rawIntro = [
-  "uy bago ka mag-chat, naghilamos ka na ba?",
-  "oh bakit ka napapadpad dito? naubusan ka na naman ba ng kausap sa totoong buhay?",
-  "musta ka na? mukhang masama pa rin itsura mo ngayon ah",
-  "anong kailangan mo boss? kung pautang, wag na kasi waley din ako",
-  "hala nagparamdam na naman ang pasikat ng taon",
-  "uy hello din, kaso wala akong ganang makipag-plastikan ngayon",
-  "oh anong meron? bakit parang gigil na gigil ka na magpapansin?",
-  "aba, milagro buhay ka pa? akala ko tinangay ka na ng hangin",
-  "pwede ba, wag kang umastang close tayo kasi hindi",
-  "namukhaan mo na naman ako nung wala kang magawa sa buhay mo noh?"
 ];
 
-const rawTanong = [
-  "tanong ka nang tanong, may nasagot ka na ba kahit minsan sa sarili mong problema?",
-  "sarili mong desisyon sa buhay di mo maayos, sa akin mo pinapasan yang tanong mo",
-  "anong klaseng tanong yan? para kang ewan na naghahanap ng hustisya sa dilim",
-  "himala, nag-isip ka na naman kuno... kaso sablay pa rin",
-  "paulit-ulit kang nagtatanong eh halata namang di mo rin iintindihin ang sagot",
-  "wala ka bang ibang mapag-abalahan bukod sa pag-imbento ng mga tanong na yan?",
-  "tinanong mo pa lang sumakit na agad ang ulo ko sa'yo",
-  "huli ka na sa balita, tapos magtatanong ka pa ng ganyan",
-  "hindi mo na kailangang alaman kasi wala namang maitutulong sa kawawa mong diskarte",
-  "ano ba talagang gusto mong palabasin? diretsuhin mo na kasi paikot-ikot ka pa"
-];
+function normalize(text) { return String(text || "").toLowerCase().replace(/\s+/g, " ").trim(); }
 
-const rawGalit = [
-  "uy galit na galit oh, tinamaan ka ba masyado sa salamin niyo?",
-  "dami mong mura at kuda pero wala ka namang binatbat sa totoo lang",
-  "iyak ka muna konti sa tabi bago ka magsalita ulit ha",
-  "yan na ba ang pinakamatapang mong vocabulary? ang hina naman",
-  "nagwala na naman ang napag-iwanan ng panahon at diskarte",
-  "buhos mo lang lahat ng sama ng loob mo, total wala ka namang ibang magawa",
-  "kumalma ka baka atakihin ka sa puso dyan sa tapang-tapangan mo",
-  "galit ka na naman, parang laging pinagagalitan ng nanay mo",
-  "kala mo naman nakakatakot ka e parang tuta ka lang naman sumagot",
-  "iyak kana niyan? hihintayin ko matapos luha mo para may masabi ka ulit"
-];
-
-const rawYabang = [
-  "wow angas ah, pautang naman diyan kahit pambili lang ng hiya mo",
-  "yabang mo e noh? parang hindi napag-iwanan sa kanto niyo",
-  "lakas ng hangin mo, lumilipad na pati buhok ko dito sa kabilang screen",
-  "puro ka yabang at angas pero pag singilan na ng gawa, tiklop ka naman",
-  "sige ipagmalaki mo pa yan, baka sakaling may maniwala maliban sa sarili mo",
-  "taas ng tingin sa sarili, e lugmok na lugmok naman ang diskarte sa buhay",
-  "hanggang yabang ka na lang talaga no? walang laman ang gawa",
-  "lakas ng loob magyabang, e pautangin ka lang ng singkong-duling hirap na hirap ka",
-  "porma mo pangmayaman pero yung laman ng bulsa mo kasing-gaan ng hangin",
-  "ikaw na nga ang bida sa sarili mong gawa-gawang kwento"
-];
-
-const rawDefault = [
-  "ano na namang pinagsasabi mo dyan? lumilipad na naman yung lutang mong utak",
-  "ha? anong konek nun sa mukha mo? sabog ka nanaman yata",
-  "hindi ko naintindihan, paki-translate nga sa may sense na salita",
-  "sumakit lang ang ulo ko sa pinaglalaban mong ewan",
-  "ikot ka pa ng ikot sa sinasabi mo, wala ka namang pinupuntahang punto",
-  "hinto ka muna, uminom ka muna ng tubig para mahimasmasan ka naman",
-  "ang haba ng sinabi mo pero wala namang sustansya, parang buhay mo",
-  "nakakaantok ka kausap, pwede bang mag-off ka muna ng chat?",
-  "wala ka bang maisip na matino ngayon kundi magkalat dito?",
-  "panibagong sablay na naman mula sa eksperto ng katangahan"
-];
-
-// Buuin ang eksaktong 250 human-like replies bawat kategorya
-const conversationalGroups = [
-  {
-    name: "kamusta_intro",
-    triggers: ["hi", "hello", "musta", "kamusta", "uy", "boss", "lodi", "paps", "master"],
-    replies: generateHumanLikePool(rawIntro, 250)
-  },
-  {
-    name: "tanong_pilosopo",
-    triggers: ["bakit", "ano", "saan", "sino", "paano", "kailan", "ilan", "may pa"],
-    replies: generateHumanLikePool(rawTanong, 250)
-  },
-  {
-    name: "galit_tropa",
-    triggers: ["ulol", "gago", "tanga", "bobo", "tarantado", "pota", "punyeta", "kupal"],
-    replies: generateHumanLikePool(rawGalit, 250)
-  },
-  {
-    name: "yabang_flex",
-    triggers: ["ako", "ako nga", "magaling", "gwapo", "maganda", "yabang", "angas", "mayaman", "pera"],
-    replies: generateHumanLikePool(rawYabang, 250)
-  },
-  {
-    name: "default_sablay",
-    triggers: [],
-    replies: generateHumanLikePool(rawDefault, 250)
-  }
-];
-
-function normalize(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getSmartConversationReply(body, threadID = "") {
+function findGroups(body) {
   const text = normalize(body);
-  let selectedReplies = [];
+  return groups.filter(group => group.triggers.some(trigger => {
+    const t = String(trigger).toLowerCase();
+    return t.length <= 4 ? new RegExp(`\\b${t.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\b`, "i").test(text) : text.includes(t);
+  }));
+}
 
-  for (const group of conversationalGroups) {
-    if (group.triggers.length > 0) {
-      const matched = group.triggers.some(trigger => {
-        const t = String(trigger).toLowerCase();
-        return t.length <= 4
-          ? new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)
-          : text.includes(t);
-      });
-
-      if (matched) {
-        selectedReplies = group.replies;
-        break;
-      }
-    }
-  }
-
-  if (selectedReplies.length === 0) {
-    const defaultGroup = conversationalGroups.find(g => g.name === "default_sablay");
-    selectedReplies = defaultGroup ? defaultGroup.replies : ["ano ba yan?"];
-  }
-
-  const reply = pickBanatReply(threadID, selectedReplies);
-
-  if (reply) {
-    rememberBanatReply(threadID, reply);
-  }
-
+function getTriggerReply(body, threadID = "") {
+  const matched = findGroups(body);
+  if (!matched.length) return null;
+  const group = matched[Math.floor(Math.random() * matched.length)];
+  const reply = pickBanatReply(threadID, group.replies);
+  if (reply) rememberBanatReply(threadID, reply);
   return reply;
 }
 
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// Makataong typing delay na kunwari ay nag-iisip at nagti-tipa base sa haba ng sagot
-async function getHumanLikeReply(body, threadID = "", minMs = 1200, maxMs = 3500) {
-  const reply = getSmartConversationReply(body, threadID);
-
-  if (!reply) return null;
-
-  const baseDelay = Math.min(Math.max(reply.length * 45, minMs), maxMs);
-  const randomJitter = Math.floor(Math.random() * 900);
-  const finalDelay = baseDelay + randomJitter;
-
-  await wait(finalDelay);
-
+function getBanatConversationReply(body, threadID = "") {
+  const direct = getTriggerReply(body, threadID);
+  if (direct) return direct;
+  const fallback = groups.flatMap(g => g.replies);
+  const reply = pickBanatReply(threadID, fallback);
+  if (reply) rememberBanatReply(threadID, reply);
   return reply;
 }
 
-module.exports = {
-  conversationalGroups,
-  getSmartConversationReply,
-  getHumanLikeReply
-};
+module.exports = { groups, getTriggerReply, getBanatConversationReply };
