@@ -64,9 +64,12 @@ function ensureThread(data, threadID) {
   return data[id];
 }
 
-function send(api, threadID, message) {
+function send(api, threadID, message, reactionEmoji = null) {
   return new Promise(resolve => {
     try {
+      if (reactionEmoji) {
+        api.setMessageReaction(reactionEmoji, threadID, () => {}, true);
+      }
       api.sendMessage(
         message,
         threadID,
@@ -115,112 +118,6 @@ function changeThreadName(
   });
 }
 
-async function lockGCName(
-  api,
-  threadID,
-  name,
-  requesterID
-) {
-  threadID = String(threadID);
-  name = String(name || "").trim();
-
-  if (String(requesterID) !== ADMIN_UID) {
-    throw new Error(
-      "Hindi ka admin. Admin lamang ang puwedeng mag-lock ng GC name."
-    );
-  }
-
-  if (!name) {
-    throw new Error(
-      "Gamitin: !lockgcname <pangalan ng GC>"
-    );
-  }
-
-  if (name.length > 100) {
-    throw new Error(
-      "Masyadong mahaba ang GC name."
-    );
-  }
-
-  if (running.has(threadID)) {
-    throw new Error(
-      "May GC-name operation pang tumatakbo."
-    );
-  }
-
-  running.add(threadID);
-
-  try {
-    // Itakda muna ang pangalan ngayon.
-    await changeThreadName(
-      api,
-      threadID,
-      name
-    );
-
-    const data = loadData();
-
-    const config = ensureThread(
-      data,
-      threadID
-    );
-
-    config.enabled = true;
-    config.name = name;
-    config.updatedAt = Date.now();
-
-    saveData(data);
-
-    console.log(
-      `[GCNAME] Locked "${name}" in ${threadID}`
-    );
-
-    return {
-      name,
-      enabled: true
-    };
-  } finally {
-    running.delete(threadID);
-  }
-}
-
-async function unlockGCName(
-  threadID,
-  requesterID
-) {
-  threadID = String(threadID);
-
-  if (String(requesterID) !== ADMIN_UID) {
-    throw new Error(
-      "Hindi ka admin."
-    );
-  }
-
-  const data = loadData();
-  const config = ensureThread(
-    data,
-    threadID
-  );
-
-  config.enabled = false;
-  config.updatedAt = Date.now();
-
-  saveData(data);
-
-  console.log(
-    `[GCNAME] Unlocked ${threadID}`
-  );
-
-  return true;
-}
-
-/*
- * Tinatawag kapag may GC-name change event.
- *
- * Hindi nito ina-activate ang lock.
- * Gumagana lamang ito sa GC na dating
- * na-lock gamit ang !lockgcname.
- */
 async function protectGCName(
   api,
   event
@@ -293,20 +190,7 @@ function handleCommand(
 ) {
   const text = String(body || "").trim();
 
-  const isLock =
-    /^!lockgcname(?:\s|$)/i.test(text);
-
-  const isUnlock =
-    /^!unlockgcname(?:\s|$)/i.test(text);
-
-  const isStatus =
-    /^!gcnameprotect(?:\s|$)/i.test(text);
-
-  if (
-    !isLock &&
-    !isUnlock &&
-    !isStatus
-  ) {
+  if (!/^\.lockgcname(?:\s|$)/i.test(text)) {
     return false;
   }
 
@@ -328,134 +212,76 @@ function handleCommand(
     return true;
   }
 
-  /*
-   * !lockgcname
-   */
-  if (isLock) {
-    const name = text
-      .replace(
-        /^!lockgcname\s*/i,
-        ""
-      )
-      .trim();
+  const name = text
+    .replace(/^\.lockgcname\s*/i, "")
+    .trim();
 
-    if (!name) {
-      send(
-        api,
-        threadID,
-        "Gamitin: !lockgcname <pangalan ng GC>"
-      );
+  const data = loadData();
+  const config = ensureThread(data, threadID);
 
-      return true;
-    }
+  // Kapag `.lockgcname` lang walang kasunod -> OFF (Unlock)
+  if (!name) {
+    config.enabled = false;
+    config.updatedAt = Date.now();
+    saveData(data);
 
     send(
       api,
       threadID,
-      `🔒 Ila-lock ang GC name sa "${name}".`
+      "🔓 GC Name protection OFF.",
+      "💤"
     );
 
-    lockGCName(
-      api,
-      threadID,
-      name,
-      requesterID
-    )
-      .then(result => {
-        send(
-          api,
-          threadID,
-          [
-            "🔒 GC NAME LOCKED",
-            "",
-            `Pangalan: ${result.name}`,
-            "Proteksyon: NAKA-ON",
-            "",
-            "Kapag binago ang GC name, ibabalik ito ng bot."
-          ].join("\n")
-        );
-      })
-      .catch(error => {
-        send(
-          api,
-          threadID,
-          `❌ Lock failed: ${
-            error?.message || error
-          }`
-        );
-      });
-
     return true;
   }
 
-  /*
-   * !unlockgcname
-   */
-  if (isUnlock) {
-    unlockGCName(
-      threadID,
-      requesterID
-    )
-      .then(() => {
-        send(
-          api,
-          threadID,
-          [
-            "🔓 GC NAME LOCK OFF",
-            "",
-            "Hindi na ibabalik ng bot ang GC name kapag binago."
-          ].join("\n")
-        );
-      })
-      .catch(error => {
-        send(
-          api,
-          threadID,
-          `❌ Unlock failed: ${
-            error?.message || error
-          }`
-        );
-      });
-
+  if (name.length > 100) {
+    send(api, threadID, "❌ Masyadong mahaba ang GC name.");
     return true;
   }
 
-  /*
-   * !gcnameprotect
-   */
-  if (isStatus) {
-    const data = loadData();
-    const config = data[threadID];
+  if (running.has(threadID)) {
+    send(api, threadID, "❌ May operation pang tumatakbo sa GC na ito.");
+    return true;
+  }
 
-    if (
-      config?.enabled &&
-      config?.name
-    ) {
+  running.add(threadID);
+
+  send(
+    api,
+    threadID,
+    `🔒 Ila-lock ang GC name sa "${name}".`,
+    "❤️"
+  );
+
+  changeThreadName(api, threadID, name)
+    .then(() => {
+      config.enabled = true;
+      config.name = name;
+      config.updatedAt = Date.now();
+      saveData(data);
+
       send(
         api,
         threadID,
-        [
-          "🔒 GC NAME PROTECTION: ON",
-          `Pangalan: ${config.name}`
-        ].join("\n")
+        `🔒 GC Name Locked: "${name}"\nProteksyon: NAKA-ON`
       );
-    } else {
+    })
+    .catch(error => {
       send(
         api,
         threadID,
-        "🔓 GC NAME PROTECTION: OFF"
+        `❌ Lock failed: ${error?.message || error}`
       );
-    }
-
-    return true;
-  }
+    })
+    .finally(() => {
+      running.delete(threadID);
+    });
 
   return true;
 }
 
 module.exports = {
   handleCommand,
-  protectGCName,
-  lockGCName,
-  unlockGCName
+  protectGCName
 };
