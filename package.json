@@ -2,9 +2,9 @@
   "name": "banat-messenger-dashboard",
   "version": "1.0.0",
   "description": "Banat Messenger Bot with Embedded Dashboard",
-  "main": "watchdog.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node watchdog.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=18"
