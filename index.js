@@ -4,7 +4,7 @@
  * SINZU - BANAT COMMAND CENTER & MESSENGER BOT
  * --------------------------------------------
  * No AI. No games. No economy. No RPG. No music. No database.
- * Features: Connect/Disconnect/Clear UI, C3C login, Admin ID security, Watchdog, & Auto-Ping.
+ * Features: Dashboard UI, Login Page, Connect/Disconnect, C3C appState support.
  */
 
 const fs = require("fs");
@@ -37,13 +37,13 @@ let messageCount = 0;
 let commandCount = 0;
 const startTime = Date.now();
 
-// Logs array para sa Logs section
+// Logs array
 let botLogs = [];
 function addLog(text) {
   const time = new Date().toISOString();
   const logEntry = `[${time}] ${text}`;
   botLogs.unshift(logEntry);
-  if (botLogs.length > 50) botLogs.pop(); // Limit to 50 logs
+  if (botLogs.length > 50) botLogs.pop();
 }
 
 // Admin ID & Dashboard credentials configuration
@@ -322,7 +322,7 @@ function startBot(apiInstance) {
       addLog(`ERROR listener error / disconnected: ${JSON.stringify(error)}`);
       setTimeout(() => {
         const session = readSession();
-        if (session && !isLoggingIn) {
+        if (session && !isLoggingIn && !currentApi) {
           loginBot(session);
         }
       }, 5000);
@@ -363,10 +363,6 @@ function loginBot(sessionData) {
       isLoggingIn = false;
       if (error) {
         addLog(`ERROR login failed: ${error?.message || error}`);
-        setTimeout(() => {
-          const session = readSession();
-          if (session) loginBot(session);
-        }, 10000);
         return;
       }
       startBot(api);
@@ -437,11 +433,11 @@ try {
         }
 
         if (action === "connect") {
+          disconnectBot();
           if (appStateInput && appStateInput.trim().length > 5) {
             try {
               let parsedState = JSON.parse(appStateInput);
               fs.writeFileSync(path.join(process.cwd(), "appstate.json"), JSON.stringify(parsedState, null, 2));
-              disconnectBot();
               loginBot(parsedState);
             } catch (e) {
               addLog(`ERROR parsing appstate: ${e.message}`);
@@ -449,8 +445,9 @@ try {
           } else {
             const session = readSession();
             if (session) {
-              disconnectBot();
               loginBot(session);
+            } else {
+              addLog("ERROR: Walang appState na nailagay o nakita.");
             }
           }
         } else if (action === "disconnect") {
@@ -465,7 +462,7 @@ try {
       }
 
       // LOGIN SCREEN
-      if (!isAuthed && !botUserID) {
+      if (!isAuthed) {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`
           <!DOCTYPE html>
@@ -504,7 +501,7 @@ try {
         return;
       }
 
-      // MAIN COMMAND CENTER DASHBOARD WITH CONNECT / DISCONNECT / CLEAR BUTTONS
+      // MAIN COMMAND CENTER DASHBOARD
       res.writeHead(200, { "content-type": "text/html" });
       res.end(`
         <!DOCTYPE html>
@@ -521,7 +518,6 @@ try {
             .logout-btn { background: #1a233a; border: 1px solid #2a3754; color: #f8fafc; padding: 6px 14px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; text-decoration: none; text-transform: uppercase; }
             .logout-btn:hover { background: #24304f; }
             
-            /* Action Buttons Container sa Taas */
             .action-bar { display: flex; gap: 8px; margin-bottom: 15px; }
             .action-btn { flex: 1; padding: 12px 0; border: none; font-weight: bold; font-size: 12px; border-radius: 8px; cursor: pointer; text-transform: uppercase; color: white; text-align: center; }
             .btn-connect { background: #16a34a; }
@@ -554,7 +550,6 @@ try {
               <a href="/logout" class="logout-btn">Logout</a>
             </div>
 
-            <!-- CONNECT, DISCONNECT, CLEAR BUTTONS SA ITAAS -->
             <form method="POST" action="/action">
               <div class="action-bar">
                 <button type="submit" name="action" value="connect" class="action-btn btn-connect">Connect</button>
@@ -626,18 +621,14 @@ try {
     const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.BOT_URL || `http://localhost:${PORT}`;
     setInterval(() => {
       const client = selfUrl.startsWith("https") ? https : http;
-      client.get(selfUrl, (res) => {
-        // Ping success
-      }).on("err", (err) => {
-        // Ping error ignored
-      });
+      client.get(selfUrl, (res) => {}).on("err", (err) => {});
     }, 4 * 60 * 1000);
   });
 } catch (error) {
   console.error("[SINZU] dashboard server failed:", error);
 }
 
-// Auto-login sa simula kung may session na
+// Auto-login kung may nakasave nang session sa simula
 const initialSession = readSession();
 if (initialSession) {
   loginBot(initialSession);
