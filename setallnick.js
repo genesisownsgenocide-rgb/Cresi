@@ -10,8 +10,7 @@ const DATA_FILE = path.join(
 
 const ADMIN_UID = "61595204307407";
 
-// Delay bawat nickname change.
-// Ginagawa itong mabagal para hindi sabay-sabay ang requests.
+// Delay bawat nickname change para hindi ma-spam ang Facebook API.
 const CHANGE_DELAY = 2500;
 
 let running = new Set();
@@ -62,9 +61,12 @@ function getThreadData(threadID) {
   return data;
 }
 
-function send(api, threadID, message) {
+function send(api, threadID, message, reactionEmoji = null) {
   return new Promise(resolve => {
     try {
+      if (reactionEmoji) {
+        api.setMessageReaction(reactionEmoji, threadID, () => {}, true);
+      }
       api.sendMessage(
         message,
         threadID,
@@ -200,7 +202,7 @@ async function setAllNicknames(
 
   if (!nickname) {
     throw new Error(
-      "Gamitin: !setallnick <nickname>"
+      "Gamitin: .setallnick <nickname>"
     );
   }
 
@@ -224,8 +226,6 @@ async function setAllNicknames(
       threadID
     );
 
-    // I-save muna ang ORIGINAL nicknames
-    // bago palitan.
     await backupOriginalNicknames(
       api,
       threadID,
@@ -246,7 +246,6 @@ async function setAllNicknames(
     for (const uid of info.participantIDs) {
       const id = String(uid);
 
-      // Huwag palitan ang nickname ng bot mismo.
       let botID = "";
 
       try {
@@ -363,13 +362,6 @@ async function restoreAllNicknames(
   }
 }
 
-/*
- * PROTECTION
- *
- * Kapag naka-enable ang setallnick at may
- * nagtanggal/nagpalit ng nickname, susubukan
- * nitong ibalik ang naka-set na nickname.
- */
 async function protectNickname(
   api,
   event
@@ -411,7 +403,6 @@ async function protectNickname(
     );
   } catch (_) {}
 
-  // Huwag i-loop ang sariling nickname change.
   if (botID && uid === botID) {
     return false;
   }
@@ -433,7 +424,7 @@ async function protectNickname(
     );
 
     console.log(
-      `[NICKNAME] Protection restored ${uid} in ${threadID}`
+      `[NICKNAME] Protection restored ${uid} in${threadID}`
     );
 
     return true;
@@ -456,9 +447,9 @@ function handleCommand(
 ) {
   const text = String(body || "").trim();
 
-  if (!/^!setallnick(?:\s|$)/i.test(text) &&
-      !/^!restoreallnick(?:\s|$)/i.test(text) &&
-      !/^!nickprotect(?:\s|$)/i.test(text)) {
+  if (!/^\.setallnick(?:\s|$)/i.test(text) &&
+      !/^\.\.restoreallnick(?:\s|$)/i.test(text) &&
+      !/^\.nickprotect(?:\s|$)/i.test(text)) {
     return false;
   }
 
@@ -485,7 +476,7 @@ function handleCommand(
     return true;
   }
 
-  if (command === "!setallnick") {
+  if (command === ".setallnick") {
     const nickname =
       parts.slice(1).join(" ").trim();
 
@@ -493,7 +484,7 @@ function handleCommand(
       send(
         api,
         threadID,
-        "Gamitin: !setallnick <nickname>"
+        "Gamitin: .setallnick <nickname>"
       );
 
       return true;
@@ -502,7 +493,8 @@ function handleCommand(
     send(
       api,
       threadID,
-      `⏳ Sine-set ko ang nickname ng members sa "${nickname}".`
+      `⏳ Sine-set ko ang nickname ng members sa "${nickname}".`,
+      "❤️"
     );
 
     setAllNicknames(
@@ -538,11 +530,12 @@ function handleCommand(
     return true;
   }
 
-  if (command === "!restoreallnick") {
+  if (command === "..restoreallnick") {
     send(
       api,
       threadID,
-      "⏳ Ibinabalik ko ang dating nicknames..."
+      "⏳ Ibinabalik ko ang dating nicknames...",
+      "💤"
     );
 
     restoreAllNicknames(
@@ -559,7 +552,7 @@ function handleCommand(
             `Naibalik: ${result.restored}`,
             `Hindi naibalik: ${result.failed}`,
             "",
-            "🛡️ Proteksyon: NAKA-OFF"
+            "🛡️ Proteksyon: NAKA-OFF`"
           ].join("\n")
         );
       })
@@ -576,7 +569,7 @@ function handleCommand(
     return true;
   }
 
-  if (command === "!nickprotect") {
+  if (command === ".nickprotect") {
     const data = getThreadData(threadID);
 
     const enabled =
