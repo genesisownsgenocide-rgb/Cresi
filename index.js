@@ -1,5 +1,16 @@
 "use strict";
 
+// =========================================================
+// PANG-IWAS CRASH SA RAILWAY (GLOBAL ERROR HANDLERS)
+// =========================================================
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('💥 Uncaught Exception:', error?.message || error);
+});
+
 /*
  * BANAT-ONLY MESSENGER BOT + EMBEDDED DASHBOARD (CRESI FRAMEWORK)
  * -------------------------------------------------------------
@@ -8,14 +19,26 @@
  *   Username: Admin
  *   Password: sinzuontop
  *
- * MESSENGER COMMANDS (Admin Only):
- *   .                  (Banat ON + ❤️ reaction)
- *   ..                 (Banat OFF + 💤 reaction)
- *   .setallnick <name> (Set all nicknames + ❤️ reaction)
- *   ..restoreallnick   (Restore nicknames + 💤 reaction)
- *   .nickprotect       (Check nickname protection status)
- *   .lockgcname <name> (Lock GC name + ❤️ reaction)
- *   .lockgcname        (Unlock GC name kung walang pangalan + 💤 reaction)
+ * DASHBOARD:
+ *   /
+ *   /api/login
+ *   /api/logout
+ *   /api/status
+ *   /api/connect
+ *   /api/disconnect
+ *
+ * MESSENGER COMMANDS:
+ *   !banat on
+ *   !banat off
+ *   !banat toggle
+ *   !banat status
+ *   !banat help
+ *
+ * NOTE:
+ *   !setallnickname
+ *   !lockgc
+ *   !unlockgc
+ *   remain Messenger-side commands.
  */
 
 const fs = require("fs");
@@ -40,16 +63,24 @@ const {
   isBanatConversationModeActive
 } = require("./banat-targeting");
 
-// Pag-import ng mga protection modules
-const {
-  handleCommand: handleNickCommand,
-  protectNickname
-} = require("./nickname-protection");
+// Protection Modules Integration
+let handleNickCommand, protectNickname;
+try {
+  const nickProt = require("./nickname-protection");
+  handleNickCommand = nickProt.handleCommand;
+  protectNickname = nickProt.protectNickname;
+} catch (e) {
+  console.warn("[WARN] nickname-protection.js not loaded.");
+}
 
-const {
-  handleCommand: handleGCNameCommand,
-  protectGCName
-} = require("./gcname-protection");
+let handleGCNameCommand, protectGCName;
+try {
+  const gcProt = require("./gcname-protection");
+  handleGCNameCommand = gcProt.handleCommand;
+  protectGCName = gcProt.protectGCName;
+} catch (e) {
+  console.warn("[WARN] gcname-protection.js not loaded.");
+}
 
 
 /* =========================================================
@@ -58,11 +89,16 @@ const {
 
 const PORT = Number(process.env.PORT || 10000);
 
+/*
+ * Dashboard credentials.
+ *
+ * These are intentionally hardcoded as requested.
+ */
 const DASHBOARD_USERNAME = "Admin";
 const DASHBOARD_PASSWORD = "sinzuontop";
 
 /*
- * ADMIN RESTRICTION CONFIG (Ikaw lang ang pwedeng mag-command)
+ * ADMIN RESTRICTION CONFIG
  */
 const ADMIN_IDS = [
   "61595204307407"
@@ -138,21 +174,68 @@ const dashboardLogs = [];
 const MAX_LOGS = 150;
 
 
-const originalConsoleLog = console.log;
-const originalConsoleError = console.error;
-const originalConsoleWarn = console.warn;
+function addLog(message) {
+  const line =
+    `[${new Date().toISOString()}] ${message}`;
+
+  dashboardLogs.push(line);
+
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
+    dashboardLogs.shift();
+  }
+
+  console.log(message);
+}
+
+
+/*
+ * Keep console output visible while also
+ * storing it for the dashboard.
+ */
+
+const originalConsoleLog =
+  console.log;
+
+const originalConsoleError =
+  console.error;
+
+const originalConsoleWarn =
+  console.warn;
 
 
 console.log = (...args) => {
   const message = args
     .map(value => {
-      if (typeof value === "string") return value;
-      try { return JSON.stringify(value); } catch (_) { return String(value); }
+
+      if (
+        typeof value === "string"
+      ) {
+        return value;
+      }
+
+      try {
+        return JSON.stringify(value);
+      } catch (_) {
+        return String(value);
+      }
+
     })
     .join(" ");
 
-  dashboardLogs.push(`[${new Date().toISOString()}] ${message}`);
-  if (dashboardLogs.length > MAX_LOGS) dashboardLogs.shift();
+  dashboardLogs.push(
+    `[${new Date().toISOString()}] ${message}`
+  );
+
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
+    dashboardLogs.shift();
+  }
+
   originalConsoleLog(...args);
 };
 
@@ -160,13 +243,33 @@ console.log = (...args) => {
 console.error = (...args) => {
   const message = args
     .map(value => {
-      if (typeof value === "string") return value;
-      try { return JSON.stringify(value); } catch (_) { return String(value); }
+
+      if (
+        typeof value === "string"
+      ) {
+        return value;
+      }
+
+      try {
+        return JSON.stringify(value);
+      } catch (_) {
+        return String(value);
+      }
+
     })
     .join(" ");
 
-  dashboardLogs.push(`[${new Date().toISOString()}] ERROR ${message}`);
-  if (dashboardLogs.length > MAX_LOGS) dashboardLogs.shift();
+  dashboardLogs.push(
+    `[${new Date().toISOString()}] ERROR ${message}`
+  );
+
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
+    dashboardLogs.shift();
+  }
+
   originalConsoleError(...args);
 };
 
@@ -174,13 +277,33 @@ console.error = (...args) => {
 console.warn = (...args) => {
   const message = args
     .map(value => {
-      if (typeof value === "string") return value;
-      try { return JSON.stringify(value); } catch (_) { return String(value); }
+
+      if (
+        typeof value === "string"
+      ) {
+        return value;
+      }
+
+      try {
+        return JSON.stringify(value);
+      } catch (_) {
+        return String(value);
+      }
+
     })
     .join(" ");
 
-  dashboardLogs.push(`[${new Date().toISOString()}] WARN ${message}`);
-  if (dashboardLogs.length > MAX_LOGS) dashboardLogs.shift();
+  dashboardLogs.push(
+    `[${new Date().toISOString()}] WARN ${message}`
+  );
+
+  if (
+    dashboardLogs.length >
+    MAX_LOGS
+  ) {
+    dashboardLogs.shift();
+  }
+
   originalConsoleWarn(...args);
 };
 
@@ -201,208 +324,790 @@ function sleep(ms) {
 ========================================================= */
 
 function readSession() {
-  const raw = process.env.FB_COOKIES || process.env.FB_APPSTATE;
+
+  const raw =
+    process.env.FB_COOKIES ||
+    process.env.FB_APPSTATE;
+
   if (raw) {
-    const trimmed = String(raw).trim();
+
+    const trimmed =
+      String(raw).trim();
+
     try {
-      return JSON.parse(trimmed);
+
+      return JSON.parse(
+        trimmed
+      );
+
     } catch (_) {
+
       return trimmed;
     }
   }
 
-  for (const file of ["appstate.json", "cookies.json"]) {
-    const filePath = path.join(process.cwd(), file);
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+  for (
+    const file of [
+      "appstate.json",
+      "cookies.json"
+    ]
+  ) {
+
+    const filePath =
+      path.join(
+        process.cwd(),
+        file
+      );
+
+    if (
+      fs.existsSync(filePath)
+    ) {
+
+      return JSON.parse(
+        fs.readFileSync(
+          filePath,
+          "utf8"
+        )
+      );
     }
   }
 
-  throw new Error("No Facebook session found.");
+
+  throw new Error(
+    "No Facebook session found. Enter a session in the dashboard or configure FB_COOKIES/FB_APPSTATE."
+  );
 }
 
 
 /* =========================================================
-   NORMALIZE SESSION
+   NORMALIZE SESSION (C3C AppState Only)
 ========================================================= */
 
 function normalizeSession(value) {
-  if (!value) throw new Error("C3C session data is empty.");
+  if (!value) {
+    throw new Error("C3C session data is empty.");
+  }
+
   let sessionData = value;
 
   if (typeof value === "string") {
     const trimmed = value.trim();
-    if (!trimmed) throw new Error("C3C session string is empty.");
+    if (!trimmed) {
+      throw new Error("C3C session string is empty.");
+    }
+
     try {
       sessionData = JSON.parse(trimmed);
     } catch (error) {
-      throw new Error("Invalid C3C format.");
+      throw new Error("Invalid C3C format. Please paste a valid JSON array or object from C3C.");
     }
   }
+
+  if (!Array.isArray(sessionData) && typeof sessionData !== "object") {
+    throw new Error("C3C session must be a valid JSON array or object.");
+  }
+
   return sessionData;
 }
 
 
 /* =========================================================
-   QUEUE & TRAFFIC SEND
+   QUEUE
 ========================================================= */
 
-function enqueue(threadID, job) {
-  const key = String(threadID);
-  const current = threadQueues.get(key) || Promise.resolve();
-  const next = current.catch(() => {}).then(job).finally(() => {
-    if (threadQueues.get(key) === next) threadQueues.delete(key);
-  });
-  threadQueues.set(key, next);
-  return next;
-}
+function enqueue(
+  threadID,
+  job
+) {
 
-async function acquireGlobalSlot() {
-  while (globalActive >= GLOBAL_SEND_LIMIT) {
-    await sleep(150);
-  }
-  globalActive++;
-}
+  const key =
+    String(threadID);
 
-function releaseGlobalSlot() {
-  globalActive = Math.max(0, globalActive - 1);
-}
+  const current =
+    threadQueues.get(key) ||
+    Promise.resolve();
 
-function is1545012(error) {
-  return /1545012|temporarily unavailable|message could not be sent/i.test(JSON.stringify(error || ""));
-}
 
-function trafficSendMessage(apiInstance, message, threadID, callback, replyToMessageID = null) {
-  const key = String(threadID);
-  return enqueue(key, async () => {
-    const now = Date.now();
-    const cooldownUntil = Number(threadCooldown.get(key) || 0);
-    if (cooldownUntil > now) {
-      callback(new Error(`thread cooldown active`));
-      return;
-    }
+  const next =
+    current
+      .catch(() => {})
+      .then(job)
+      .finally(() => {
 
-    const sinceLast = now - Number(threadLastSent.get(key) || 0);
-    if (sinceLast < THREAD_COOLDOWN_MS) {
-      await sleep(THREAD_COOLDOWN_MS - sinceLast);
-    }
+        if (
+          threadQueues.get(key) ===
+          next
+        ) {
 
-    await acquireGlobalSlot();
-
-    try {
-      let lastError = null;
-      for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
-        try {
-          const result = await new Promise((resolve, reject) => {
-            let settled = false;
-            const done = (err, info) => {
-              if (settled) return;
-              settled = true;
-              if (err) reject(err); else resolve(info);
-            };
-
-            try {
-              let returned = replyToMessageID
-                ? apiInstance.sendMessage(message, threadID, done, replyToMessageID)
-                : apiInstance.sendMessage(message, threadID, done);
-
-              if (returned && typeof returned.then === "function") {
-                returned.then(info => done(null, info)).catch(done);
-              }
-            } catch (error) {
-              reject(error);
-            }
-          });
-
-          threadLastSent.set(key, Date.now());
-          callback(null, result);
-          return;
-        } catch (error) {
-          lastError = error;
-          if (!is1545012(error) || attempt >= RETRY_DELAYS.length) break;
-          await sleep(RETRY_DELAYS[attempt]);
+          threadQueues.delete(
+            key
+          );
         }
-      }
-      callback(lastError);
-    } finally {
-      releaseGlobalSlot();
-    }
-  });
+      });
+
+
+  threadQueues.set(
+    key,
+    next
+  );
+
+  return next;
 }
 
 
 /* =========================================================
-   BANAT COMMAND CHECK (".", "..")
+   GLOBAL SEND LIMIT
+========================================================= */
+
+async function acquireGlobalSlot() {
+
+  while (
+    globalActive >=
+    GLOBAL_SEND_LIMIT
+  ) {
+
+    await sleep(150);
+  }
+
+  globalActive++;
+}
+
+
+function releaseGlobalSlot() {
+
+  globalActive =
+    Math.max(
+      0,
+      globalActive - 1
+    );
+}
+
+
+/* =========================================================
+   ERROR CHECK
+========================================================= */
+
+function is1545012(error) {
+
+  const text =
+    JSON.stringify(
+      error || ""
+    );
+
+  return /1545012|temporarily unavailable|message could not be sent/i.test(
+    text
+  );
+}
+
+
+/* =========================================================
+   TRAFFIC SEND
+========================================================= */
+
+function trafficSendMessage(
+  apiInstance,
+  message,
+  threadID,
+  callback,
+  replyToMessageID = null
+) {
+
+  const key =
+    String(threadID);
+
+
+  return enqueue(
+    key,
+    async () => {
+
+      const now =
+        Date.now();
+
+
+      const cooldownUntil =
+        Number(
+          threadCooldown.get(key) ||
+          0
+        );
+
+
+      if (
+        cooldownUntil >
+        now
+      ) {
+
+        callback(
+          new Error(
+            `thread cooldown active for ${
+              cooldownUntil - now
+            }ms`
+          )
+        );
+
+        return;
+      }
+
+
+      const sinceLast =
+        now -
+        Number(
+          threadLastSent.get(key) ||
+          0
+        );
+
+
+      if (
+        sinceLast <
+        THREAD_COOLDOWN_MS
+      ) {
+
+        await sleep(
+          THREAD_COOLDOWN_MS -
+          sinceLast
+        );
+      }
+
+
+      await acquireGlobalSlot();
+
+
+      try {
+
+        let lastError =
+          null;
+
+
+        for (
+          let attempt = 0;
+          attempt <=
+            RETRY_DELAYS.length;
+          attempt++
+        ) {
+
+          try {
+
+            const result =
+              await new Promise(
+                (resolve, reject) => {
+
+                  let settled =
+                    false;
+
+
+                  const done =
+                    (
+                      err,
+                      info
+                    ) => {
+
+                      if (
+                        settled
+                      ) {
+                        return;
+                      }
+
+                      settled =
+                        true;
+
+
+                      if (err) {
+                        reject(err);
+                      } else {
+                        resolve(info);
+                      }
+                    };
+
+
+                  try {
+
+                    let returned;
+
+
+                    if (
+                      replyToMessageID
+                    ) {
+
+                      returned =
+                        apiInstance.sendMessage(
+                          message,
+                          threadID,
+                          done,
+                          replyToMessageID
+                        );
+
+                    } else {
+
+                      returned =
+                        apiInstance.sendMessage(
+                          message,
+                          threadID,
+                          done
+                        );
+                    }
+
+
+                    if (
+                      returned &&
+                      typeof returned.then ===
+                        "function"
+                    ) {
+
+                      returned
+                        .then(
+                          info =>
+                            done(
+                              null,
+                              info
+                            )
+                        )
+                        .catch(done);
+                    }
+
+                  } catch (error) {
+
+                    reject(error);
+                  }
+                }
+              );
+
+
+            threadLastSent.set(
+              key,
+              Date.now()
+            );
+
+
+            callback(
+              null,
+              result
+            );
+
+            return;
+
+
+          } catch (error) {
+
+            lastError =
+              error;
+
+
+            if (
+              !is1545012(error) ||
+              attempt >=
+                RETRY_DELAYS.length
+            ) {
+
+              break;
+            }
+
+
+            threadCooldown.set(
+              key,
+              Date.now() +
+                Math.min(
+                  15000,
+                  RETRY_DELAYS[attempt]
+                )
+            );
+
+
+            await sleep(
+              RETRY_DELAYS[attempt]
+            );
+
+
+            threadCooldown.delete(
+              key
+            );
+          }
+        }
+
+
+        if (
+          is1545012(lastError)
+        ) {
+
+          threadCooldown.set(
+            key,
+            Date.now() +
+              5 * 60 * 1000
+          );
+        }
+
+
+        callback(
+          lastError
+        );
+
+
+      } finally {
+
+        releaseGlobalSlot();
+      }
+    }
+  );
+}
+
+
+/* =========================================================
+   BANAT COMMAND CHECK
 ========================================================= */
 
 function isBanatCommand(body) {
-  const clean = String(body || "").trim();
-  return clean === "." || clean === "..";
+
+  return /^!banat(?:\s|$)/i.test(
+    String(body || "").trim()
+  );
 }
 
-function commandSendMessage(apiInstance, message, threadID, replyToMessageID = null) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const done = (err, info) => {
-      if (settled) return;
-      settled = true;
-      if (err) reject(err); else resolve(info);
-    };
 
-    try {
-      const returned = replyToMessageID
-        ? apiInstance.sendMessage(message, threadID, done, replyToMessageID)
-        : apiInstance.sendMessage(message, threadID, done);
+/* =========================================================
+   DIRECT COMMAND SEND
+========================================================= */
 
-      if (returned && typeof returned.then === "function") {
-        returned.then(info => done(null, info)).catch(done);
+function commandSendMessage(
+  apiInstance,
+  message,
+  threadID,
+  replyToMessageID = null
+) {
+
+  return new Promise(
+    (resolve, reject) => {
+
+      let settled =
+        false;
+
+
+      const done =
+        (
+          err,
+          info
+        ) => {
+
+          if (settled) {
+            return;
+          }
+
+          settled =
+            true;
+
+
+          if (err) {
+            reject(err);
+          } else {
+            resolve(info);
+          }
+        };
+
+
+      try {
+
+        const returned =
+          replyToMessageID
+            ? apiInstance.sendMessage(
+                message,
+                threadID,
+                done,
+                replyToMessageID
+              )
+            : apiInstance.sendMessage(
+                message,
+                threadID,
+                done
+              );
+
+
+        if (
+          returned &&
+          typeof returned.then ===
+            "function"
+        ) {
+
+          returned
+            .then(
+              info =>
+                done(
+                  null,
+                  info
+                )
+            )
+            .catch(done);
+        }
+
+
+      } catch (error) {
+
+        done(error);
       }
-    } catch (error) {
-      done(error);
     }
-  });
+  );
 }
 
-function sendCommandReply(apiInstance, event, message, reactionEmoji = null) {
-  const threadID = String(event.threadID);
-  const messageID = event.messageID || null;
 
-  if (reactionEmoji && messageID && typeof apiInstance.setMessageReaction === "function") {
-    apiInstance.setMessageReaction(reactionEmoji, messageID, () => {}, true);
-  }
+/* =========================================================
+   COMMAND REPLY
+========================================================= */
 
-  commandSendMessage(apiInstance, message, threadID, messageID)
-    .catch(error => console.error("[BANAT] command reply failed:", error));
+function sendCommandReply(
+  apiInstance,
+  event,
+  message
+) {
+
+  const threadID =
+    String(event.threadID);
+
+
+  commandSendMessage(
+    apiInstance,
+    message,
+    threadID,
+    event.messageID || null
+  )
+    .then(() => {
+
+      console.log(
+        `[BANAT] command reply sent: ${message}`
+      );
+
+    })
+    .catch(error => {
+
+      console.error(
+        "[BANAT] command reply failed:",
+        error?.message ||
+          error
+      );
+
+    });
 }
 
-function handleBanatCommand(apiInstance, event, body) {
-  const threadID = String(event.threadID);
-  const clean = String(body).trim();
 
-  if (clean === ".") {
-    setBanatConversationMode(threadID, true, event.senderID);
-    activeThreads.add(threadID);
-    sendCommandReply(apiInstance, event, "banat is on. say whatever u want 😭", "❤️");
+/* =========================================================
+   BANAT COMMAND HANDLER
+========================================================= */
+
+function handleBanatCommand(
+  apiInstance,
+  event,
+  body
+) {
+
+  const threadID =
+    String(event.threadID);
+
+
+  const parts =
+    String(body)
+      .trim()
+      .split(/\s+/);
+
+
+  const sub =
+    (
+      parts[1] ||
+      "status"
+    ).toLowerCase();
+
+
+  if (
+    sub === "on" ||
+    sub === "enable" ||
+    sub === "start"
+  ) {
+
+    setBanatConversationMode(
+      threadID,
+      true,
+      event.senderID
+    );
+
+
+    activeThreads.add(
+      threadID
+    );
+
+
+    console.log(
+      `[BANAT] activated thread ${threadID} by ${
+        event.senderID ||
+        "unknown"
+      }`
+    );
+
+
+    sendCommandReply(
+      apiInstance,
+      event,
+      "banat is on. say whatever u want 😭"
+    );
+
+
     return true;
   }
 
-  if (clean === "..") {
-    setBanatConversationMode(threadID, false);
-    activeThreads.delete(threadID);
-    sendCommandReply(apiInstance, event, "banat off. peace 😭", "💤");
+
+  if (
+    sub === "off" ||
+    sub === "disable" ||
+    sub === "stop"
+  ) {
+
+    setBanatConversationMode(
+      threadID,
+      false
+    );
+
+
+    activeThreads.delete(
+      threadID
+    );
+
+
+    console.log(
+      `[BANAT] deactivated thread ${threadID}`
+    );
+
+
+    sendCommandReply(
+      apiInstance,
+      event,
+      "banat off. peace 😭"
+    );
+
+
     return true;
   }
 
-  return false;
+
+  if (
+    sub === "toggle"
+  ) {
+
+    const next =
+      !isBanatConversationModeActive(
+        threadID
+      );
+
+
+    setBanatConversationMode(
+      threadID,
+      next,
+      event.senderID
+    );
+
+
+    if (next) {
+
+      activeThreads.add(
+        threadID
+      );
+
+    } else {
+
+      activeThreads.delete(
+        threadID
+      );
+    }
+
+
+    console.log(
+      `[BANAT] toggled thread ${threadID}: ${
+        next
+          ? "ON"
+          : "OFF"
+      }`
+    );
+
+
+    sendCommandReply(
+      apiInstance,
+      event,
+      next
+        ? "banat is on 😭"
+        : "banat is off"
+    );
+
+
+    return true;
+  }
+
+
+  if (
+    sub === "status"
+  ) {
+
+    const on =
+      activeThreads.has(
+        threadID
+      ) ||
+      isBanatConversationModeActive(
+        threadID
+      );
+
+
+    sendCommandReply(
+      apiInstance,
+      event,
+      on
+        ? "banat: ON 🟢"
+        : "banat: OFF 🔴"
+    );
+
+
+    return true;
+  }
+
+
+  if (
+    sub === "help"
+  ) {
+
+    sendCommandReply(
+      apiInstance,
+      event,
+      "!banat on · !banat off · !banat toggle · !banat status"
+    );
+
+
+    return true;
+  }
+
+
+  sendCommandReply(
+    apiInstance,
+    event,
+    "unknown banat command. use !banat help"
+  );
+
+
+  return true;
 }
 
-async function sendBanat(apiInstance, event, text) {
+
+/* =========================================================
+   BANAT SEND
+========================================================= */
+
+async function sendBanat(
+  apiInstance,
+  event,
+  text
+) {
+
   return sendBanatReplyWithTyping(
     apiInstance,
     text,
     String(event.threadID),
     event.messageID || null,
-    { trafficSendMessage, incomingText: event.body || "" }
+    {
+      trafficSendMessage,
+
+      incomingText:
+        event.body || ""
+    }
   );
 }
 
@@ -411,318 +1116,2364 @@ async function sendBanat(apiInstance, event, text) {
    MESSAGE HANDLER
 ========================================================= */
 
-function onMessage(apiInstance, event) {
-  try {
-    if (!event) return;
-    if (event.type && event.type !== "message") return;
-    if (event.senderID && botUserID && String(event.senderID) === String(botUserID)) return;
+function onMessage(
+  apiInstance,
+  event
+) {
 
-    const body = String(event.body || "").trim();
-    if (!body) return;
+  if (!event) {
+    return;
+  }
 
-    const senderID = String(event.senderID || "");
-    messageCount++;
 
-    // 1. Suriin kung Nickname Protection Command
-    if (handleNickCommand(apiInstance, event, body)) {
-      if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) return;
-      return;
-    }
+  if (
+    event.type &&
+    event.type !== "message"
+  ) {
+    return;
+  }
 
-    // 2. Suriin kung GC Name Protection Command (.lockgcname)
-    if (handleGCNameCommand(apiInstance, event, body)) {
-      if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) return;
-      return;
-    }
 
-    // 3. Banat On/Off Commands
-    if (isBanatCommand(body)) {
-      if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) return;
-      commandCount++;
-      handleBanatCommand(apiInstance, event, body);
-      return;
-    }
+  if (
+    event.senderID &&
+    botUserID &&
+    String(event.senderID) ===
+      String(botUserID)
+  ) {
+    return;
+  }
 
-    const threadID = String(event.threadID);
-    const active = activeThreads.has(threadID) || isBanatConversationModeActive(threadID);
-    const target = classifyBanatTarget({ event, body, botID: botUserID });
 
-    if (active || (target && target.shouldRespond)) {
-      const reply =
-        (typeof getTriggerReply === "function" ? getTriggerReply(body, threadID) : null) ||
-        (typeof getBanatConversationReply === "function" ? getBanatConversationReply(body, threadID) : null);
+  const body =
+    String(
+      event.body || ""
+    ).trim();
 
-      if (reply) {
-        sendBanat(apiInstance, event, reply).catch(error => {
-          console.error("[BANAT] reply error:", error?.message || error);
+
+  if (!body) {
+    return;
+  }
+
+  const senderID = String(event.senderID || "");
+
+  messageCount++;
+
+
+  /*
+   * PROTECTION COMMANDS CHECK
+   */
+
+  if (handleNickCommand && handleNickCommand(apiInstance, event, body)) {
+    if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) return;
+    return;
+  }
+
+  if (handleGCNameCommand && handleGCNameCommand(apiInstance, event, body)) {
+    if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) return;
+    return;
+  }
+
+
+  /*
+   * BANAT COMMANDS
+   */
+
+  if (
+    isBanatCommand(body)
+  ) {
+    if (ADMIN_IDS.length > 0 && !ADMIN_IDS.includes(senderID)) return;
+
+    commandCount++;
+
+
+    handleBanatCommand(
+      apiInstance,
+      event,
+      body
+    );
+
+
+    return;
+  }
+
+
+  const threadID =
+    String(event.threadID);
+
+
+  const active =
+    activeThreads.has(
+      threadID
+    ) ||
+    isBanatConversationModeActive(
+      threadID
+    );
+
+
+  const target =
+    classifyBanatTarget({
+      event,
+      body,
+      botID:
+        botUserID
+    });
+
+
+  /*
+   * ACTIVE BANAT THREAD
+   */
+
+  if (active) {
+
+    console.log(
+      `[BANAT] active message in ${threadID} from ${
+        event.senderID ||
+        "unknown"
+      }`
+    );
+
+
+    const reply =
+      getTriggerReply(
+        body,
+        threadID
+      ) ||
+      getBanatConversationReply(
+        body,
+        threadID
+      );
+
+
+    if (reply) {
+
+      sendBanat(
+        apiInstance,
+        event,
+        reply
+      )
+        .catch(error => {
+
+          console.error(
+            "[BANAT] reply error:",
+            error
+          );
+
         });
-      }
+
+    } else {
+
+      console.warn(
+        `[BANAT] no reply generated for active message in ${threadID}`
+      );
     }
-  } catch (err) {
-    console.error("[CRITICAL MESSAGE HANDLER ERROR]:", err?.message || err);
+
+
+    return;
+  }
+
+
+  /*
+   * TARGETED BANAT
+   */
+
+  if (
+    target.shouldRespond
+  ) {
+
+    const reply =
+      getTriggerReply(
+        body,
+        threadID
+      ) ||
+      getBanatConversationReply(
+        body,
+        threadID
+      );
+
+
+    if (reply) {
+
+      sendBanat(
+        apiInstance,
+        event,
+        reply
+      )
+        .catch(error => {
+
+          console.error(
+            "[BANAT]",
+            error
+          );
+
+        });
+    }
   }
 }
 
 
 /* =========================================================
-   BOT START & LISTEN
+   BOT START
 ========================================================= */
 
-function start(apiInstance) {
-  api = apiInstance;
+function start(
+  apiInstance
+) {
+
+  api =
+    apiInstance;
+
+
   try {
-    botUserID = String(apiInstance.getCurrentUserID?.() || "");
+
+    botUserID =
+      String(
+        apiInstance.getCurrentUserID?.() ||
+        ""
+      );
+
   } catch (_) {
+
     botUserID = "";
   }
 
-  botConnectedAt = Date.now();
-  botConnecting = false;
 
-  apiInstance.listenMqtt((error, event) => {
-    if (error) {
-      console.error("[BANAT] listener error:", error);
-      return;
-    }
+  botConnectedAt =
+    Date.now();
 
-    try {
-      // Saluhin ang mga pagbabago sa GC para sa protections
-      if (event?.logMessageType === "log:user-nickname") {
-        protectNickname(apiInstance, event);
+
+  botConnecting =
+    false;
+
+
+  if (
+    DEFAULT_ON
+  ) {
+
+    console.log(
+      "[BANAT] BANAT_DEFAULT_ON enabled."
+    );
+  }
+
+
+  apiInstance.listenMqtt(
+    (error, event) => {
+
+      if (error) {
+
+        console.error(
+          "[BANAT] listener error:",
+          error
+        );
+
+        return;
       }
-      if (event?.logMessageType === "log:thread-name") {
-        protectGCName(apiInstance, event);
+
+
+      try {
+
+        // Protections Listeners
+        if (event?.logMessageType === "log:user-nickname" && protectNickname) {
+          protectNickname(apiInstance, event);
+        }
+        if (event?.logMessageType === "log:thread-name" && protectGCName) {
+          protectGCName(apiInstance, event);
+        }
+
+        if (
+          DEFAULT_ON &&
+          event?.threadID &&
+          event?.senderID &&
+          String(
+            event.senderID
+          ) !==
+            String(
+              botUserID
+            )
+        ) {
+
+          const key =
+            String(
+              event.threadID
+            );
+
+
+          if (
+            !activeThreads.has(
+              key
+            )
+          ) {
+
+            activeThreads.add(
+              key
+            );
+
+
+            setBanatConversationMode(
+              key,
+              true,
+              event.senderID
+            );
+          }
+        }
+
+
+        onMessage(
+          apiInstance,
+          event
+        );
+
+
+      } catch (error) {
+
+        console.error(
+          "[BANAT] message handler error:",
+          error
+        );
       }
-
-      onMessage(apiInstance, event);
-    } catch (error) {
-      console.error("[BANAT] outer listener error:", error);
     }
-  });
+  );
 
-  console.log(`[BANAT] online${botUserID ? ` as ${botUserID}` : ""}`);
+
+  console.log(
+    `[BANAT] online${
+      botUserID
+        ? ` as ${botUserID}`
+        : ""
+    }`
+  );
 }
 
 
 /* =========================================================
-   CONNECT / DISCONNECT
+   CONNECT BOT USING SESSION
 ========================================================= */
 
-function connectBotWithSession(session) {
-  if (botConnecting) return Promise.reject(new Error("Bot is already connecting."));
-  botConnecting = true;
+function connectBotWithSession(
+  session
+) {
 
-  let appStateData;
-  try {
-    appStateData = normalizeSession(session);
-  } catch (error) {
-    botConnecting = false;
-    return Promise.reject(error);
+  if (
+    botConnecting
+  ) {
+
+    return Promise.reject(
+      new Error(
+        "Bot is already connecting."
+      )
+    );
   }
 
-  return new Promise((resolve, reject) => {
-    let finished = false;
-    function finishError(error) {
-      if (finished) return;
-      finished = true;
-      botConnecting = false;
-      reject(error);
-    }
 
-    try {
-      login(appStateData, (error, loggedApi) => {
-        if (error) { finishError(error); return; }
-        if (!loggedApi) { finishError(new Error("No API object.")); return; }
+  botConnecting =
+    true;
 
-        try {
-          start(loggedApi);
-          finished = true;
-          botConnecting = false;
-          resolve({ ok: true });
-        } catch (error) {
-          finishError(error);
+
+  let appStateData;
+
+
+  try {
+
+    appStateData =
+      normalizeSession(
+        session
+      );
+
+  } catch (error) {
+
+    botConnecting =
+      false;
+
+
+    return Promise.reject(
+      error
+    );
+  }
+
+
+  console.log(
+    `[BANAT] logging in with dashboard C3C session...`
+  );
+
+
+  return new Promise(
+    (resolve, reject) => {
+
+      let finished =
+        false;
+
+
+      function finishError(
+        error
+      ) {
+
+        if (finished) {
+          return;
         }
-      });
-    } catch (error) {
-      finishError(error);
+
+
+        finished =
+          true;
+
+
+        botConnecting =
+          false;
+
+
+        console.error(
+          "[BANAT] login failed:",
+          error?.message ||
+            error
+        );
+
+
+        reject(error);
+      }
+
+
+      try {
+
+        login(
+          appStateData,
+          (error, loggedApi) => {
+
+            if (error) {
+
+              finishError(
+                error
+              );
+
+              return;
+            }
+
+
+            if (!loggedApi) {
+
+              finishError(
+                new Error(
+                  "Facebook login returned no API object."
+                )
+              );
+
+              return;
+            }
+
+
+            try {
+
+              start(
+                loggedApi
+              );
+
+
+              finished =
+                true;
+
+
+              botConnecting =
+                false;
+
+
+              resolve({
+                ok: true
+              });
+
+
+            } catch (error) {
+
+              finishError(
+                error
+              );
+            }
+          }
+        );
+
+
+      } catch (error) {
+
+        finishError(
+          error
+        );
+      }
     }
-  });
+  );
 }
 
+
+/* =========================================================
+   DISCONNECT BOT
+========================================================= */
+
 function disconnectBot() {
-  if (!api) return false;
-  try { if (typeof api.logout === "function") api.logout(() => {}); } catch (_) {}
-  api = null;
-  botUserID = "";
-  botConnectedAt = 0;
-  botConnecting = false;
-  console.log("[BANAT] disconnected.");
+
+  if (!api) {
+
+    return false;
+  }
+
+
+  try {
+
+    if (
+      typeof api.logout ===
+      "function"
+    ) {
+
+      api.logout(
+        () => {}
+      );
+    }
+
+  } catch (error) {
+
+    console.error(
+      "[BANAT] logout error:",
+      error
+    );
+  }
+
+
+  api =
+    null;
+
+
+  botUserID =
+    "";
+
+
+  botConnectedAt =
+    0;
+
+
+  botConnecting =
+    false;
+
+
+  console.log(
+    "[BANAT] disconnected."
+  );
+
+
   return true;
 }
 
 
 /* =========================================================
-   DASHBOARD AUTH & UTILS
+   DASHBOARD AUTH
 ========================================================= */
 
 function createDashboardSession() {
+
   cleanupDashboardSessions();
-  const token = crypto.randomBytes(48).toString("hex");
-  dashboardSessions.set(token, { createdAt: Date.now() });
+
+
+  const token =
+    crypto
+      .randomBytes(48)
+      .toString("hex");
+
+
+  dashboardSessions.set(
+    token,
+    {
+      createdAt:
+        Date.now()
+    }
+  );
+
+
   return token;
 }
 
+
 function cleanupDashboardSessions() {
-  const now = Date.now();
-  for (const [token, session] of dashboardSessions) {
-    const createdAt = typeof session === "object" ? session.createdAt : session;
-    if (!createdAt || now - createdAt > SESSION_MAX_AGE) dashboardSessions.delete(token);
+
+  const now =
+    Date.now();
+
+
+  for (
+    const [
+      token,
+      session
+    ] of dashboardSessions
+  ) {
+
+    const createdAt =
+      typeof session ===
+      "object"
+        ? session.createdAt
+        : session;
+
+
+    if (
+      !createdAt ||
+      now - createdAt >
+        SESSION_MAX_AGE
+    ) {
+
+      dashboardSessions.delete(
+        token
+      );
+    }
   }
 }
 
-function getCookie(req, name) {
-  const header = req.headers.cookie || "";
-  const cookies = header.split(";").map(v => v.trim());
-  for (const item of cookies) {
-    const index = item.indexOf("=");
-    if (index === -1) continue;
-    if (item.slice(0, index) === name) {
-      try { return decodeURIComponent(item.slice(index + 1)); } catch (_) { return item.slice(index + 1); }
+
+function getCookie(
+  req,
+  name
+) {
+
+  const header =
+    req.headers.cookie ||
+    "";
+
+
+  const cookies =
+    header
+      .split(";")
+      .map(
+        value =>
+          value.trim()
+      );
+
+
+  for (
+    const item of cookies
+  ) {
+
+    const index =
+      item.indexOf("=");
+
+
+    if (
+      index === -1
+    ) {
+      continue;
+    }
+
+
+    const key =
+      item.slice(
+        0,
+        index
+      );
+
+
+    const value =
+      item.slice(
+        index + 1
+      );
+
+
+    if (
+      key === name
+    ) {
+
+      try {
+
+        return decodeURIComponent(
+          value
+        );
+
+      } catch (_) {
+
+        return value;
+      }
     }
   }
+
+
   return null;
 }
 
-function isDashboardAuthenticated(req) {
+
+function isDashboardAuthenticated(
+  req
+) {
+
   cleanupDashboardSessions();
-  const token = getCookie(req, "dashboard_session");
-  if (!token) return false;
-  const session = dashboardSessions.get(token);
-  if (!session) return false;
-  const createdAt = typeof session === "object" ? session.createdAt : session;
-  if (!createdAt || Date.now() - createdAt > SESSION_MAX_AGE) {
-    dashboardSessions.delete(token);
+
+
+  const token =
+    getCookie(
+      req,
+      "dashboard_session"
+    );
+
+
+  if (!token) {
     return false;
   }
+
+
+  const session =
+    dashboardSessions.get(
+      token
+    );
+
+
+  if (!session) {
+    return false;
+  }
+
+
+  const createdAt =
+    typeof session ===
+    "object"
+      ? session.createdAt
+      : session;
+
+
+  if (
+    !createdAt ||
+    Date.now() -
+      createdAt >
+      SESSION_MAX_AGE
+  ) {
+
+    dashboardSessions.delete(
+      token
+    );
+
+
+    return false;
+  }
+
+
   return true;
-}
-
-function sendJSON(res, status, data) {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    "Pragma": "no-cache"
-  });
-  res.end(JSON.stringify(data));
-}
-
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", chunk => {
-      data += chunk;
-      if (data.length > 2 * 1024 * 1024) { reject(new Error("Too large")); req.destroy(); }
-    });
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
-}
-
-function startWatchdog() {
-  setInterval(async () => {
-    try {
-      const response = await fetch(`http://127.0.0.1:${PORT}/health`, { cache: "no-store" });
-      const data = await response.json();
-      console.log(`[WATCHDOG] Self-ping success: status ${response.status}, bot: ${data.bot}`);
-    } catch (error) {
-      console.error("[WATCHDOG] Ping failed:", error?.message || error);
-    }
-  }, 4 * 60 * 1000);
 }
 
 
 /* =========================================================
-   DASHBOARD HTML & INTERFACE (Updated with all commands)
+   HTTP HELPERS
+========================================================= */
+
+function sendJSON(
+  res,
+  status,
+  data
+) {
+
+  const body =
+    JSON.stringify(
+      data
+    );
+
+
+  res.writeHead(
+    status,
+    {
+      "Content-Type":
+        "application/json; charset=utf-8",
+
+      "Cache-Control":
+        "no-store",
+
+      "Pragma":
+        "no-cache"
+    }
+  );
+
+
+  res.end(
+    body
+  );
+}
+
+
+function readBody(
+  req
+) {
+
+  return new Promise(
+    (resolve, reject) => {
+
+      let data =
+        "";
+
+
+      req.on(
+        "data",
+        chunk => {
+
+          data +=
+            chunk;
+
+
+          if (
+            data.length >
+            2 * 1024 * 1024
+          ) {
+
+            reject(
+              new Error(
+                "Request body too large."
+              )
+            );
+
+
+            req.destroy();
+          }
+        }
+      );
+
+
+      req.on(
+        "end",
+        () => {
+
+          resolve(
+            data
+          );
+        }
+      );
+
+
+      req.on(
+        "error",
+        reject
+      );
+    }
+  );
+}
+
+
+/* =========================================================
+   LOGIN PAGE
 ========================================================= */
 
 function dashboardLoginHTML() {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sinzu • Login</title><style>
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#080a0d; color:#fff; font-family:Arial,sans-serif; }
-  .login-box { width:min(420px,92%); padding:30px; border:1px solid #30363d; border-radius:18px; background:rgba(15,18,13,.96); }
-  input { width:100%; padding:13px; border-radius:10px; border:1px solid #30363d; background:#0d1117; color:white; margin:10px 0; }
-  button { width:100%; padding:13px; border:0; border-radius:10px; background:#fff; color:#080a0d; font-weight:bold; cursor:pointer; margin-top:15px; }
-  </style></head><body>
-  <div class="login-box"><h2>SINZU ADMIN LOGIN</h2>
-  <form id="loginForm"><label>Username</label><input id="username" required><label>Password</label><input id="password" type="password" required><button type="submit">LOGIN</button></form></div>
-  <script>
-  document.getElementById('loginForm').addEventListener('submit', async e => {
-    e.preventDefault();
-    const res = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ username: document.getElementById('username').value, password: document.getElementById('password').value }) });
-    if(res.ok) window.location.replace('/'); else alert('Invalid credentials');
-  });</script></body></html>`;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1.0"
+>
+
+<meta
+  name="robots"
+  content="noindex,nofollow"
+>
+
+<title>Sinzu • Admin Login</title>
+
+<style>
+
+* {
+  box-sizing: border-box;
 }
 
-function dashboardHTML() {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sinzu • Dashboard</title><style>
-  body { margin:0; background:#090b0f; color:#f0f6fc; font-family:Arial,sans-serif; }
-  header { padding:20px; background:#0d1117; border-bottom:1px solid #21262d; display:flex; justify-content:space-between; align-items:center; }
-  .container { width:min(1100px,94%); margin:25px auto; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:15px; margin-bottom:20px; }
-  .card { background:#0d1117; border:1px solid #21262d; border-radius:14px; padding:18px; }
-  .stat { font-size:22px; font-weight:bold; margin-top:5px; }
-  textarea { width:100%; min-height:140px; background:#080b0f; color:#fff; border:1px solid #30363d; border-radius:10px; padding:12px; }
-  button { padding:10px 15px; border:0; border-radius:8px; font-weight:bold; cursor:pointer; }
-  .connect { background:#238636; color:#fff; } .disconnect { background:#da3633; color:#fff; }
-  .logs { background:#05070a; border:1px solid #21262d; padding:10px; height:250px; overflow:auto; font-family:monospace; font-size:11px; color:#8b949e; white-space:pre-wrap; }
-  </style></head><body>
-  <header><h2>SINZU COMMAND CENTER</h2><button onclick="fetch('/api/logout',{method:'POST'}).then(()=>location.replace('/'))">LOGOUT</button></header>
-  <div class="container">
-    <div class="grid">
-      <div class="card"><div>Status</div><div id="status" class="stat" style="color:#f85149">OFFLINE</div></div>
-      <div class="card"><div>Bot UID</div><div id="uid" class="stat">-</div></div>
-      <div class="card"><div>Uptime</div><div id="uptime" class="stat">0s</div></div>
-      <div class="card"><div>Messages</div><div id="messages" class="stat">0</div></div>
-    </div>
-    <div class="card"><h2>C3C AppState Session</h2><textarea id="session" placeholder="Paste session JSON here..."></textarea>
-    <div style="margin-top:10px"><button class="connect" onclick="connectBot()">CONNECT</button> <button class="disconnect" onclick="disconnectBot()">DISCONNECT</button></div></div>
-    <div class="card"><h2>Messenger Commands</h2><pre style="color:#c9d1d9; font-size:12px;">
-.                  (Banat ON + ❤️)
-..                 (Banat OFF + 💤)
-.setallnick <name> (Set All Nickname + ❤️)
-..restoreallnick   (Restore Nickname + 💤)
-.nickprotect       (Check Nickname Status)
-.lockgcname <name> (Lock GC Name + ❤️)
-.lockgcname        (Unlock GC Name + 💤)
-    </pre></div>
-    <div class="card"><h2>Live Logs</h2><div id="logs" class="logs">Loading logs...</div></div>
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background:
+    radial-gradient(
+      circle at top,
+      #18202a 0%,
+      #080a0d 55%,
+      #030405 100%
+    );
+
+  color: #fff;
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+}
+
+.login-box {
+  width: min(420px, 92%);
+  padding: 30px;
+
+  border: 1px solid #30363d;
+  border-radius: 18px;
+
+  background:
+    rgba(15, 18, 23, .96);
+
+  box-shadow:
+    0 25px 80px
+    rgba(0,0,0,.55);
+}
+
+.logo {
+  text-align: center;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 4px;
+}
+
+.sub {
+  text-align: center;
+  color: #8b949e;
+  font-size: 13px;
+  margin:
+    5px 0 28px;
+}
+
+label {
+  display: block;
+  color: #8b949e;
+  font-size: 12px;
+  margin:
+    15px 0 7px;
+}
+
+input {
+  width: 100%;
+  padding: 13px;
+
+  border-radius: 10px;
+  border: 1px solid #30363d;
+  outline: none;
+
+  background: #0d1117;
+  color: white;
+
+  font-size: 14px;
+}
+
+input:focus {
+  border-color: #58a6ff;
+}
+
+button {
+  width: 100%;
+  margin-top: 20px;
+  padding: 13px;
+
+  border: 0;
+  border-radius: 10px;
+
+  background: #fff;
+  color: #080a0d;
+
+  font-weight: 800;
+  cursor: pointer;
+}
+
+button:hover {
+  opacity: .9;
+}
+
+button:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
+#error {
+  display: none;
+
+  margin-top: 15px;
+  padding: 11px;
+
+  border-radius: 9px;
+
+  background: #30151a;
+  border: 1px solid #7d2735;
+
+  color: #ff7b8b;
+
+  font-size: 13px;
+  text-align: center;
+}
+
+.footer {
+  margin-top: 20px;
+
+  text-align: center;
+
+  color: #484f58;
+
+  font-size: 11px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="login-box">
+
+  <div class="logo">
+    SINZU
   </div>
-  <script>
-  async function refresh() {
-    const res = await fetch('/api/status');
-    if(res.status === 401) { location.replace('/'); return; }
-    const data = await res.json();
-    document.getElementById('status').textContent = data.connected ? 'ONLINE' : 'OFFLINE';
-    document.getElementById('status').style.color = data.connected ? '#3fb950' : '#f85149';
-    document.getElementById('uid').textContent = data.userID || '-';
-    document.getElementById('uptime').textContent = Math.floor(data.uptime / 60) + 'm ' + (data.uptime % 60) + 's';
-    document.getElementById('messages').textContent = data.messageCount;
-    const l = document.getElementById('logs');
-    l.textContent = (data.logs || []).join('\\n');
-    l.scrollTop = l.scrollHeight;
+
+  <div class="sub">
+    BANAT COMMAND CENTER
+  </div>
+
+
+  <form id="loginForm">
+
+    <label>
+      USERNAME
+    </label>
+
+    <input
+      id="username"
+      autocomplete="username"
+      placeholder="Enter username"
+      required
+    >
+
+
+    <label>
+      PASSWORD
+    </label>
+
+    <input
+      id="password"
+      type="password"
+      autocomplete="current-password"
+      placeholder="Enter password"
+      required
+    >
+
+
+    <button
+      id="loginButton"
+      type="submit"
+    >
+      LOGIN
+    </button>
+
+  </form>
+
+
+  <div id="error">
+    Invalid username or password.
+  </div>
+
+
+  <div class="footer">
+    Authorized dashboard only
+  </div>
+
+</div>
+
+
+<script>
+
+const form =
+  document.getElementById(
+    "loginForm"
+  );
+
+const button =
+  document.getElementById(
+    "loginButton"
+  );
+
+const errorBox =
+  document.getElementById(
+    "error"
+  );
+
+
+form.addEventListener(
+  "submit",
+  async function(event) {
+
+    event.preventDefault();
+
+
+    const username =
+      document
+        .getElementById(
+          "username"
+        )
+        .value
+        .trim();
+
+
+    const password =
+      document
+        .getElementById(
+          "password"
+        )
+        .value;
+
+
+    errorBox.style.display =
+      "none";
+
+
+    button.disabled =
+      true;
+
+    button.textContent =
+      "LOGGING IN...";
+
+
+    try {
+
+      const response =
+        await fetch(
+          "/api/login",
+          {
+            method: "POST",
+
+            credentials:
+              "same-origin",
+
+            cache:
+              "no-store",
+
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify({
+                username,
+                password
+              })
+          }
+        );
+
+
+      let data;
+
+
+      try {
+
+        data =
+          await response.json();
+
+      } catch (_) {
+
+        data = {
+          ok: false,
+          error:
+            "Server returned an invalid response."
+        };
+      }
+
+
+      if (
+        response.ok &&
+        data.ok
+      ) {
+
+        window.location.replace(
+          "/"
+        );
+
+        return;
+      }
+
+
+      errorBox.textContent =
+        data.error ||
+        "Invalid username or password.";
+
+      errorBox.style.display =
+        "block";
+
+
+    } catch (error) {
+
+      errorBox.textContent =
+        "Connection error. Check the Railway deployment logs.";
+
+      errorBox.style.display =
+        "block";
+
+    } finally {
+
+      button.disabled =
+        false;
+
+      button.textContent =
+        "LOGIN";
+    }
+
   }
-  async function connectBot() {
-    const session = document.getElementById('session').value.trim();
-    if(!session) { alert('Paste appstate first'); return; }
-    const res = await fetch('/api/connect', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session}) });
-    const d = await res.json(); alert(d.ok ? 'Connected!' : d.error);
-    refresh();
+);
+
+</script>
+
+</body>
+</html>`;
+}
+
+
+/* =========================================================
+   MAIN DASHBOARD
+========================================================= */
+
+function dashboardHTML() {
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1.0"
+>
+
+<meta
+  name="robots"
+  content="noindex,nofollow"
+>
+
+<title>Sinzu • Banat Dashboard</title>
+
+<style>
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+
+  background: #090b0f;
+
+  color: #f0f6fc;
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+}
+
+header {
+  padding: 20px;
+
+  border-bottom:
+    1px solid #21262d;
+
+  background:
+    #0d1117;
+
+  display: flex;
+
+  justify-content:
+    space-between;
+
+  align-items:
+    center;
+
+  gap: 15px;
+}
+
+.brand {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 3px;
+}
+
+.brand span {
+  display: block;
+
+  color: #8b949e;
+
+  font-size: 10px;
+
+  letter-spacing: 2px;
+
+  margin-top: 4px;
+}
+
+.logout {
+  width: auto;
+
+  margin: 0;
+
+  padding:
+    9px 15px;
+
+  border:
+    1px solid #30363d;
+
+  background:
+    #161b22;
+
+  color: #fff;
+
+  border-radius:
+    9px;
+
+  cursor: pointer;
+}
+
+.container {
+  width:
+    min(1100px, 94%);
+
+  margin:
+    25px auto;
+}
+
+.grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(220px, 1fr)
+    );
+
+  gap: 15px;
+}
+
+.card {
+  background:
+    #0d1117;
+
+  border:
+    1px solid #21262d;
+
+  border-radius:
+    14px;
+
+  padding:
+    18px;
+
+  margin-bottom:
+    15px;
+}
+
+.card h2 {
+  font-size:
+    15px;
+
+  margin:
+    0 0 14px;
+}
+
+.stat-label {
+  color:
+    #8b949e;
+
+  font-size:
+    11px;
+
+  text-transform:
+    uppercase;
+}
+
+.stat {
+  margin-top:
+    7px;
+
+  font-size:
+    24px;
+
+  font-weight:
+    800;
+}
+
+.status-online {
+  color:
+    #3fb950;
+}
+
+.status-offline {
+  color:
+    #f85149;
+}
+
+textarea {
+  width: 100%;
+
+  min-height:
+    170px;
+
+  resize:
+    vertical;
+
+  background:
+    #080b0f;
+
+  color:
+    #f0f6fc;
+
+  border:
+    1px solid #30363d;
+
+  border-radius:
+    10px;
+
+  padding:
+    13px;
+
+  outline:
+    none;
+
+  font-family:
+    monospace;
+}
+
+textarea:focus {
+  border-color:
+    #58a6ff;
+}
+
+.buttons {
+  display:
+    flex;
+
+  gap:
+    10px;
+
+  flex-wrap:
+    wrap;
+
+  margin-top:
+    12px;
+}
+
+.buttons button {
+  width:
+    auto;
+
+  margin:
+    0;
+}
+
+button {
+  padding:
+    11px 16px;
+
+  border:
+    0;
+
+  border-radius:
+    9px;
+
+  cursor:
+    pointer;
+
+  font-weight:
+    700;
+}
+
+button:disabled {
+  opacity:
+    .6;
+
+  cursor:
+    wait;
+}
+
+.connect {
+  background:
+    #238636;
+
+  color:
+    #fff;
+}
+
+.disconnect {
+  background:
+    #da3633;
+
+  color:
+    #fff;
+}
+
+.clear {
+  background:
+    #21262d;
+
+  color:
+    #fff;
+}
+
+.notice {
+  color:
+    #8b949e;
+
+  font-size:
+    12px;
+
+  line-height:
+    1.6;
+}
+
+.commands {
+  white-space:
+    pre-line;
+
+  color:
+    #c9d1d9;
+
+  font-family:
+    monospace;
+
+  font-size:
+    13px;
+
+  line-height:
+    1.8;
+}
+
+.logs {
+  background:
+    #05070a;
+
+  border:
+    1px solid #21262d;
+
+  border-radius:
+    10px;
+
+  padding:
+    12px;
+
+  height:
+    300px;
+
+  overflow:
+    auto;
+
+  font-family:
+    monospace;
+
+  font-size:
+    11px;
+
+  color:
+    #8b949e;
+
+  white-space:
+    pre-wrap;
+}
+
+#message {
+  display:
+    none;
+
+  padding:
+    11px;
+
+  border-radius:
+    9px;
+
+  margin-bottom:
+    15px;
+
+  background:
+    #101820;
+
+  border:
+    1px solid #30363d;
+
+  color:
+    #c9d1d9;
+}
+
+.small {
+  color:
+    #8b949e;
+
+  font-size:
+    11px;
+
+  margin-top:
+    10px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+
+<header>
+
+  <div class="brand">
+
+    SINZU
+
+    <span>
+      BANAT COMMAND CENTER
+    </span>
+
+  </div>
+
+
+  <button
+    class="logout"
+    onclick="logout()"
+  >
+    LOGOUT
+  </button>
+
+</header>
+
+
+<div class="container">
+
+
+  <div id="message"></div>
+
+
+  <div class="grid">
+
+
+    <div class="card">
+
+      <div class="stat-label">
+        Bot Status
+      </div>
+
+      <div
+        id="status"
+        class="stat status-offline"
+      >
+        OFFLINE
+      </div>
+
+    </div>
+
+
+    <div class="card">
+
+      <div class="stat-label">
+        Bot UID
+      </div>
+
+      <div
+        id="uid"
+        class="stat"
+        style="font-size:16px"
+      >
+        -
+      </div>
+
+    </div>
+
+
+    <div class="card">
+
+      <div class="stat-label">
+        Uptime
+      </div>
+
+      <div
+        id="uptime"
+        class="stat"
+      >
+        0s
+      </div>
+
+    </div>
+
+
+    <div class="card">
+
+      <div class="stat-label">
+        Messages
+      </div>
+
+      <div
+        id="messages"
+        class="stat"
+      >
+        0
+      </div>
+
+    </div>
+
+
+    <div class="card">
+
+      <div class="stat-label">
+        Commands
+      </div>
+
+      <div
+        id="commands"
+        class="stat"
+      >
+        0
+      </div>
+
+    </div>
+
+
+    <div class="card">
+
+      <div class="stat-label">
+        Active Threads
+      </div>
+
+      <div
+        id="threads"
+        class="stat"
+      >
+        0
+      </div>
+
+    </div>
+
+
+  </div>
+
+
+  <div class="card">
+
+    <h2>
+      Facebook Session / C3C AppState
+    </h2>
+
+
+    <div class="notice">
+
+      Paste your exported C3C AppState JSON data below.
+
+      The dashboard does not display
+      the submitted session after
+      connecting.
+
+    </div>
+
+
+    <br>
+
+
+    <textarea
+      id="session"
+      placeholder="Paste C3C appstate JSON here..."
+      spellcheck="false"
+      autocomplete="off"
+    ></textarea>
+
+
+    <div class="buttons">
+
+
+      <button
+        id="connectButton"
+        class="connect"
+        onclick="connectBot()"
+      >
+        CONNECT
+      </button>
+
+
+      <button
+        id="disconnectButton"
+        class="disconnect"
+        onclick="disconnectBot()"
+      >
+        DISCONNECT
+      </button>
+
+
+      <button
+        class="clear"
+        onclick="clearSession()"
+      >
+        CLEAR
+      </button>
+
+
+    </div>
+
+
+    <div class="small">
+      Session data is sent only when
+      you press CONNECT.
+    </div>
+
+  </div>
+
+
+  <div class="card">
+
+    <h2>
+      Messenger Commands
+    </h2>
+
+
+    <div class="commands">
+
+!banat on
+!banat off
+!banat toggle
+!banat status
+!banat help
+
+    </div>
+
+  </div>
+
+
+  <div class="card">
+
+    <h2>
+      Group Commands
+    </h2>
+
+
+    <div class="commands">
+
+.setallnick
+..restoreallnick
+.nickprotect
+.lockgcname
+
+    </div>
+
+
+    <div class="notice">
+
+      These remain Messenger commands.
+      They are not executed from the
+      dashboard.
+
+    </div>
+
+  </div>
+
+
+  <div class="card">
+
+    <h2>
+      Logs
+    </h2>
+
+
+    <div
+      id="logs"
+      class="logs"
+    >
+      Loading...
+    </div>
+
+  </div>
+
+
+</div>
+
+
+<script>
+
+let refreshing =
+  false;
+
+
+function showMessage(text) {
+
+  const box =
+    document.getElementById(
+      "message"
+    );
+
+
+  box.textContent =
+    text;
+
+
+  box.style.display =
+    "block";
+
+
+  setTimeout(
+    () => {
+
+      box.style.display =
+        "none";
+
+    },
+    4000
+  );
+}
+
+
+function formatUptime(
+  seconds
+) {
+
+  seconds =
+    Math.max(
+      0,
+      Number(
+        seconds || 0
+      )
+    );
+
+
+  const d =
+    Math.floor(
+      seconds / 86400
+    );
+
+
+  seconds %= 86400;
+
+
+  const h =
+    Math.floor(
+      seconds / 3600
+    );
+
+
+  seconds %= 3600;
+
+
+  const m =
+    Math.floor(
+      seconds / 60
+    );
+
+
+  const s =
+    Math.floor(
+      seconds % 60
+    );
+
+
+  if (d > 0) {
+
+    return (
+      d + "d " +
+      h + "h " +
+      m + "m"
+    );
   }
-  async function disconnectBot() {
-    await fetch('/api/disconnect', { method:'POST' });
-    alert('Disconnected'); refresh();
+
+
+  if (h > 0) {
+
+    return (
+      h + "h " +
+      m + "m " +
+      s + "s"
+    );
   }
-  setInterval(refresh, 3000); refresh();
-  </script></body></html>`;
+
+
+  if (m > 0) {
+
+    return (
+      m + "m " +
+      s + "s"
+    );
+  }
+
+
+  return s + "s";
+}
+
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+async function refreshStatus() {
+
+  if (refreshing) {
+    return;
+  }
+
+
+  refreshing =
+    true;
+
+
+  try {
+
+    const response =
+      await fetch(
+        "/api/status",
+        {
+          method:
+            "GET",
+
+          credentials:
+            "same-origin",
+
+          cache:
+            "no-store"
+        }
+      );
+
+
+    if (
+      response.status ===
+      401
+    ) {
+
+      window.location.replace(
+        "/"
+      );
+
+      return;
+    }
+
+
+    const data =
+      await response.json();
+
+
+    const status =
+      document.getElementById(
+        "status"
+      );
+
+
+    status.textContent =
+      data.connected
+        ? "ONLINE"
+        : (
+            data.connecting
+              ? "CONNECTING"
+              : "OFFLINE"
+          );
+
+
+    status.className =
+      "stat " +
+      (
+        data.connected
+          ? "status-online"
+          : "status-offline"
+      );
+
+
+    document.getElementById(
+      "uid"
+    ).textContent =
+      data.userID ||
+      "-";
+
+
+    document.getElementById(
+      "uptime"
+    ).textContent =
+      formatUptime(
+        data.uptime
+      );
+
+
+    document.getElementById(
+      "messages"
+    ).textContent =
+      data.messageCount ||
+      0;
+
+
+    document.getElementById(
+      "commands"
+    ).textContent =
+      data.commandCount ||
+      0;
+
+
+    document.getElementById(
+      "threads"
+    ).textContent =
+      data.activeThreads ||
+      0;
+
+
+    const logs =
+      document.getElementById(
+        "logs"
+      );
+
+
+    logs.textContent =
+      (
+        data.logs ||
+        []
+      ).join(
+        "\\n"
+      );
+
+
+    logs.scrollTop =
+      logs.scrollHeight;
+
+
+  } catch (error) {
+
+    console.error(
+      error
+    );
+
+  } finally {
+
+    refreshing =
+      false;
+  }
+}
+
+
+/* =========================================================
+   CONNECT
+========================================================= */
+
+async function connectBot() {
+
+  const sessionInput =
+    document.getElementById(
+      "session"
+    );
+
+
+  const button =
+    document.getElementById(
+      "connectButton"
+    );
+
+
+  const session =
+    sessionInput.value.trim();
+
+
+  if (!session) {
+
+    showMessage(
+      "Please paste your C3C appstate JSON first."
+    );
+
+    return;
+  }
+
+
+  button.disabled =
+    true;
+
+
+  button.textContent =
+    "CONNECTING...";
+
+
+  showMessage(
+    "Connecting..."
+  );
+
+
+  try {
+
+    const response =
+      await fetch(
+        "/api/connect",
+        {
+          method:
+            "POST",
+
+          credentials:
+            "same-origin",
+
+          cache:
+            "no-store",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body:
+            JSON.stringify({
+              session
+            })
+        }
+      );
+
+
+    let data;
+
+
+    try {
+
+      data =
+        await response.json();
+
+    } catch (_) {
+
+      data = {
+        ok: false,
+        error:
+          "Invalid server response."
+      };
+    }
+
+
+    if (
+      !response.ok ||
+      !data.ok
+    ) {
+
+      showMessage(
+        data.error ||
+        "Connection failed."
+      );
+
+      return;
+    }
+
+
+    sessionInput.value =
+      "";
+
+
+    showMessage(
+      "Bot connected successfully."
+    );
+
+
+    await refreshStatus();
+
+
+  } catch (error) {
+
+    showMessage(
+      "Connection error."
+    );
+
+
+  } finally {
+
+    button.disabled =
+      false;
+
+
+    button.textContent =
+      "CONNECT";
+  }
+}
+
+
+/* =========================================================
+   DISCONNECT
+========================================================= */
+
+async function disconnectBot() {
+
+  try {
+
+    const response =
+      await fetch(
+        "/api/disconnect",
+        {
+          method:
+            "POST",
+
+          credentials:
+            "same-origin",
+
+          cache:
+            "no-store"
+        }
+      );
+
+
+    const data =
+      await response.json();
+
+
+    showMessage(
+      data.ok
+        ? "Bot disconnected."
+        : (
+            data.error ||
+            "Disconnect failed."
+          )
+    );
+
+
+    await refreshStatus();
+
+
+  } catch (error) {
+
+    showMessage(
+      "Disconnect error."
+    );
+  }
+}
+
+
+/* =========================================================
+   CLEAR
+========================================================= */
+
+function clearSession() {
+
+  document.getElementById(
+    "session"
+  ).value =
+    "";
+
+
+  showMessage(
+    "Session field cleared."
+  );
+}
+
+
+/* =========================================================
+   LOGOUT
+========================================================= */
+
+async function logout() {
+
+  try {
+
+    await fetch(
+      "/api/logout",
+      {
+        method:
+          "POST",
+
+        credentials:
+          "same-origin",
+
+        cache:
+          "no-store"
+      }
+    );
+
+  } catch (_) {}
+
+
+  window.location.replace(
+    "/"
+  );
+}
+
+
+/* =========================================================
+   INITIAL STATUS
+========================================================= */
+
+refreshStatus();
+
+
+setInterval(
+  refreshStatus,
+  3000
+);
+
+</script>
+
+</body>
+</html>`;
 }
 
 
@@ -730,126 +3481,778 @@ function dashboardHTML() {
    HTTP SERVER
 ========================================================= */
 
-const server = http.createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-    const pathname = url.pathname;
+const server =
+  http.createServer(
+    async (
+      req,
+      res
+    ) => {
 
-    if (pathname === "/api/login" && req.method === "POST") {
-      const raw = await readBody(req);
-      const body = JSON.parse(raw || "{}");
-      if (body.username !== DASHBOARD_USERNAME || body.password !== DASHBOARD_PASSWORD) {
-        sendJSON(res, 401, { ok: false, error: "Invalid credentials" });
-        return;
+      try {
+
+        const url =
+          new URL(
+            req.url,
+            `http://${
+              req.headers.host ||
+              "localhost"
+            }`
+          );
+
+
+        const pathname =
+          url.pathname;
+
+
+        /* =========================================
+           LOGIN API
+        ========================================= */
+
+        if (
+          pathname ===
+            "/api/login" &&
+          req.method ===
+            "POST"
+        ) {
+
+          const raw =
+            await readBody(
+              req
+            );
+
+
+          let body;
+
+
+          try {
+
+            body =
+              JSON.parse(
+                raw || "{}"
+              );
+
+          } catch (_) {
+
+            sendJSON(
+              res,
+              400,
+              {
+                ok:
+                  false,
+
+                error:
+                  "Invalid login request."
+              }
+            );
+
+            return;
+          }
+
+
+          const username =
+            String(
+              body.username ??
+              ""
+            ).trim();
+
+
+          const password =
+            String(
+              body.password ??
+              ""
+            );
+
+
+          if (
+            username !==
+              DASHBOARD_USERNAME ||
+            password !==
+              DASHBOARD_PASSWORD
+          ) {
+
+            console.log(
+              `[DASHBOARD] failed login attempt for username: ${
+                username ||
+                "(empty)"
+              }`
+            );
+
+
+            sendJSON(
+              res,
+              401,
+              {
+                ok:
+                  false,
+
+                error:
+                  "Invalid username or password."
+              }
+            );
+
+            return;
+          }
+
+
+          const token =
+            createDashboardSession();
+
+
+          const isHTTPS =
+            req.headers[
+              "x-forwarded-proto"
+            ] ===
+              "https" ||
+            !!req.socket.encrypted;
+
+
+          const cookieParts = [
+            `dashboard_session=${encodeURIComponent(token)}`,
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            "Max-Age=86400"
+          ];
+
+
+          if (isHTTPS) {
+
+            cookieParts.push(
+              "Secure"
+            );
+          }
+
+
+          res.writeHead(
+            200,
+            {
+              "Content-Type":
+                "application/json; charset=utf-8",
+
+              "Cache-Control":
+                "no-store",
+
+              "Pragma":
+                "no-cache",
+
+              "Set-Cookie":
+                cookieParts.join(
+                  "; "
+                )
+            }
+          );
+
+
+          res.end(
+            JSON.stringify({
+              ok:
+                true,
+
+              message:
+                "Login successful."
+            })
+          );
+
+
+          console.log(
+            "[DASHBOARD] Admin logged in successfully."
+          );
+
+
+          return;
+        }
+
+
+        /* =========================================
+           LOGOUT
+        ========================================= */
+
+        if (
+          pathname ===
+            "/api/logout" &&
+          req.method ===
+            "POST"
+        ) {
+
+          const token =
+            getCookie(
+              req,
+              "dashboard_session"
+            );
+
+
+          if (token) {
+
+            dashboardSessions.delete(
+              token
+            );
+          }
+
+
+          res.writeHead(
+            200,
+            {
+              "Content-Type":
+                "application/json; charset=utf-8",
+
+              "Cache-Control":
+                "no-store",
+
+              "Set-Cookie":
+                "dashboard_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+            }
+          );
+
+
+          res.end(
+            JSON.stringify({
+              ok:
+                true
+            })
+          );
+
+
+          return;
+        }
+
+
+        /* =========================================
+           DASHBOARD PAGE
+        ========================================= */
+
+        if (
+          pathname === "/" ||
+          pathname === "/dashboard"
+        ) {
+
+          if (
+            !isDashboardAuthenticated(
+              req
+            )
+          ) {
+
+            res.writeHead(
+              200,
+              {
+                "Content-Type":
+                  "text/html; charset=utf-8",
+
+                "Cache-Control":
+                  "no-store",
+
+                "Pragma":
+                  "no-cache"
+              }
+            );
+
+
+            res.end(
+              dashboardLoginHTML()
+            );
+
+
+            return;
+          }
+
+
+          res.writeHead(
+            200,
+            {
+              "Content-Type":
+                "text/html; charset=utf-8",
+
+              "Cache-Control":
+                "no-store",
+
+              "Pragma":
+                "no-cache"
+            }
+          );
+
+
+          res.end(
+            dashboardHTML()
+          );
+
+
+          return;
+        }
+
+
+        /* =========================================
+           AUTHENTICATION FOR API
+        ========================================= */
+
+        if (
+          pathname.startsWith(
+            "/api/"
+          )
+        ) {
+
+          if (
+            !isDashboardAuthenticated(
+              req
+            )
+          ) {
+
+            sendJSON(
+              res,
+              401,
+              {
+                ok:
+                  false,
+
+                error:
+                  "Dashboard authentication required."
+              }
+            );
+
+
+            return;
+          }
+        }
+
+
+        /* =========================================
+           STATUS
+        ========================================= */
+
+        if (
+          pathname ===
+            "/api/status" &&
+          req.method ===
+            "GET"
+        ) {
+
+          const connected =
+            !!api;
+
+
+          const uptime =
+            connected &&
+            botConnectedAt
+              ? Math.floor(
+                  (
+                    Date.now() -
+                    botConnectedAt
+                  ) /
+                  1000
+                )
+              : 0;
+
+
+          sendJSON(
+            res,
+            200,
+            {
+              ok:
+                true,
+
+              connected,
+
+              connecting:
+                botConnecting,
+
+              userID:
+                botUserID ||
+                "",
+
+              uptime,
+
+              messageCount,
+
+              commandCount,
+
+              activeThreads:
+                activeThreads.size,
+
+              queueThreads:
+                threadQueues.size,
+
+              logs:
+                dashboardLogs.slice(
+                  -80
+                )
+            }
+          );
+
+
+          return;
+        }
+
+
+        /* =========================================
+           CONNECT
+        ========================================= */
+
+        if (
+          pathname ===
+            "/api/connect" &&
+          req.method ===
+            "POST"
+        ) {
+
+          if (api) {
+
+            sendJSON(
+              res,
+              400,
+              {
+                ok:
+                  false,
+
+                error:
+                  "Bot is already connected. Disconnect first."
+              }
+            );
+
+
+            return;
+          }
+
+
+          if (
+            botConnecting
+          ) {
+
+            sendJSON(
+              res,
+              409,
+              {
+                ok:
+                  false,
+
+                error:
+                  "Bot is already connecting."
+              }
+            );
+
+
+            return;
+          }
+
+
+          const raw =
+            await readBody(
+              req
+            );
+
+
+          let body;
+
+
+          try {
+
+            body =
+              JSON.parse(
+                raw || "{}"
+              );
+
+          } catch (_) {
+
+            sendJSON(
+              res,
+              400,
+              {
+                ok:
+                  false,
+
+                error:
+                  "Invalid JSON."
+              }
+            );
+
+
+            return;
+          }
+
+
+          const session =
+            body.session;
+
+
+          if (
+            !session ||
+            !String(
+              session
+            ).trim()
+          ) {
+
+            sendJSON(
+              res,
+              400,
+              {
+                ok:
+                  false,
+
+                error:
+                  "C3C session is required."
+              }
+            );
+
+
+            return;
+          }
+
+
+          try {
+
+            await connectBotWithSession(
+              session
+            );
+
+
+            sendJSON(
+              res,
+              200,
+              {
+                ok:
+                  true,
+
+                connected:
+                  true,
+
+                userID:
+                  botUserID ||
+                  ""
+              }
+            );
+
+
+          } catch (error) {
+
+            sendJSON(
+              res,
+              500,
+              {
+                ok:
+                  false,
+
+                error:
+                  error?.message ||
+                  "Facebook login failed."
+              }
+            );
+          }
+
+
+          return;
+        }
+
+
+        /* =========================================
+           DISCONNECT
+        ========================================= */
+
+        if (
+          pathname ===
+            "/api/disconnect" &&
+          req.method ===
+            "POST"
+        ) {
+
+          const disconnected =
+            disconnectBot();
+
+
+          sendJSON(
+            res,
+            200,
+            {
+              ok:
+                true,
+
+              disconnected
+            }
+          );
+
+
+          return;
+        }
+
+
+        /* =========================================
+           HEALTH CHECK
+        ========================================= */
+
+        if (
+          pathname ===
+            "/health"
+        ) {
+          const memoryUsage = process.memoryUsage();
+
+          sendJSON(
+            res,
+            200,
+            {
+              ok:
+                true,
+
+              dashboard:
+                "online",
+
+              bot:
+                !!api
+                  ? "connected"
+                  : "disconnected",
+
+              uptime: Math.floor(process.uptime()),
+
+              memory: {
+                rssMB: Math.round(memoryUsage.rss / 1024 / 1024),
+                heapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024)
+              },
+
+              timestamp: new Date().toISOString()
+            }
+          );
+
+          return;
+        }
+
+
+        /* =========================================
+           NOT FOUND
+        ========================================= */
+
+        sendJSON(
+          res,
+          404,
+          {
+            ok:
+              false,
+
+            error:
+              "Not found."
+          }
+        );
+
+
+      } catch (error) {
+
+        console.error(
+          "[HTTP] server error:",
+          error
+        );
+
+
+        if (
+          !res.headersSent
+        ) {
+
+          sendJSON(
+            res,
+            500,
+            {
+              ok:
+                false,
+
+              error:
+                error?.message ||
+                "Internal server error."
+            }
+          );
+        }
       }
-      const token = createDashboardSession();
-      res.writeHead(200, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Set-Cookie": `dashboard_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`
-      });
-      res.end(JSON.stringify({ ok: true }));
-      return;
     }
-
-    if (pathname === "/api/logout" && req.method === "POST") {
-      const token = getCookie(req, "dashboard_session");
-      if (token) dashboardSessions.delete(token);
-      res.writeHead(200, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Set-Cookie": "dashboard_session=; Path=/; HttpOnly; Max-Age=0"
-      });
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-
-    if (pathname === "/" || pathname === "/dashboard") {
-      if (!isDashboardAuthenticated(req)) {
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(dashboardLoginHTML());
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(dashboardHTML());
-      return;
-    }
-
-    if (pathname.startsWith("/api/") && !isDashboardAuthenticated(req)) {
-      sendJSON(res, 401, { ok: false, error: "Unauthorized" });
-      return;
-    }
-
-    if (pathname === "/api/status" && req.method === "GET") {
-      sendJSON(res, 200, {
-        ok: true,
-        connected: !!api,
-        connecting: botConnecting,
-        userID: botUserID || "",
-        uptime: api && botConnectedAt ? Math.floor((Date.now() - botConnectedAt) / 1000) : 0,
-        messageCount,
-        commandCount,
-        activeThreads: activeThreads.size,
-        logs: dashboardLogs.slice(-80)
-      });
-      return;
-    }
-
-    if (pathname === "/api/connect" && req.method === "POST") {
-      if (api) { sendJSON(res, 400, { ok: false, error: "Already connected" }); return; }
-      const raw = await readBody(req);
-      const body = JSON.parse(raw || "{}");
-      await connectBotWithSession(body.session);
-      sendJSON(res, 200, { ok: true, userID: botUserID });
-      return;
-    }
-
-    if (pathname === "/api/disconnect" && req.method === "POST") {
-      const disconnected = disconnectBot();
-      sendJSON(res, 200, { ok: true, disconnected });
-      return;
-    }
-
-    if (pathname === "/health") {
-      const memoryUsage = process.memoryUsage();
-      sendJSON(res, 200, {
-        ok: true,
-        bot: !!api ? "connected" : "disconnected",
-        uptime: Math.floor(process.uptime()),
-        memory: { rssMB: Math.round(memoryUsage.rss / 1024 / 1024) },
-        timestamp: new Date().toISOString()
-      });
-      return;
-    }
-
-    sendJSON(res, 404, { ok: false, error: "Not found" });
-  } catch (error) {
-    if (!res.headersSent) sendJSON(res, 500, { ok: false, error: error?.message || "Internal error" });
-  }
-});
+  );
 
 
 /* =========================================================
-   SERVER START
+   START SERVER
 ========================================================= */
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`[DASHBOARD] running on port ${PORT}`);
-  startWatchdog();
-});
+server.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+
+    console.log(
+      `[DASHBOARD] running on port ${PORT}`
+    );
+
+    console.log(
+      `[DASHBOARD] username: ${DASHBOARD_USERNAME}`
+    );
+
+    console.log(
+      "[DASHBOARD] password configured."
+    );
+  }
+);
+
+
+/* =========================================================
+   OPTIONAL ENV / FILE SESSION AUTO LOGIN
+========================================================= */
 
 const hasSavedSession =
-  !!(process.env.FB_COOKIES || process.env.FB_APPSTATE) ||
-  fs.existsSync(path.join(process.cwd(), "appstate.json")) ||
-  fs.existsSync(path.join(process.cwd(), "cookies.json"));
+  !!(
+    process.env.FB_COOKIES ||
+    process.env.FB_APPSTATE
+  ) ||
+  fs.existsSync(
+    path.join(
+      process.cwd(),
+      "appstate.json"
+    )
+  ) ||
+  fs.existsSync(
+    path.join(
+      process.cwd(),
+      "cookies.json"
+    )
+  );
+
 
 if (hasSavedSession) {
+
+  console.log(
+    "[BANAT] saved session detected; attempting automatic login..."
+  );
+
+
   try {
-    connectBotWithSession(readSession())
-      .then(() => console.log("[BANAT] automatic login successful."))
-      .catch(error => console.error("[BANAT] auto login failed:", error?.message));
+
+    const savedSession =
+      readSession();
+
+
+    connectBotWithSession(
+      savedSession
+    )
+      .then(() => {
+
+        console.log(
+          "[BANAT] automatic login successful."
+        );
+
+      })
+      .catch(error => {
+
+        console.error(
+          "[BANAT] automatic login failed:",
+          error?.message ||
+            error
+        );
+
+      });
+
+
   } catch (error) {
-    console.error("[BANAT] saved session error:", error?.message);
+
+    console.error(
+      "[BANAT] saved session error:",
+      error?.message ||
+        error
+    );
   }
 }
+
+
+/* =========================================================
+   EXPORTS
+========================================================= */
 
 module.exports = {
   trafficSendMessage,
